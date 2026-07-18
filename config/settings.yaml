@@ -1,0 +1,121 @@
+# config/settings.yaml — параметры проекта. Абсолютные машинно-зависимые пути
+# (Desktop-папки DT/TabPFN/KAN) выносите в config/settings.local.yaml (в .gitignore),
+# он переопределяет значения отсюда. Так проект остаётся переносимым.
+
+paths:
+  # Папки ВНУТРИ проекта (обозначены для Claude Code):
+  inbox_dir: "data/inbox"           # сюда ВСЕГДА кладём исходную таблицу для анализа
+  miri_logs_dir: "data/miri_logs"   # сюда кладём недельные CSV-логи инкубатора MIRI 6391
+  processed_dir: "data/processed"
+  agent_packets_dir: "data/processed/agent_packets"
+  local_private_dir: "data/processed/local_private"
+  sample_dir: "data/sample"
+  opu_table: "data/inbox/OPU_table.xlsx"
+
+external_tools:
+  # Всё запускается АВТОМАТИЧЕСКИ из /run-analysis. {input} = таблица из data/inbox (OPU table).
+  digital_twin:
+    launch: true
+    mode: batch                                # RUN_BATCH.bat завершается сам (без интерфейса)
+    project_dir: "C:/Users/User/Desktop/IVF/AI/IVF Digital Twin Pro/IVF Digital Twin"
+    run_cmd: 'RUN_BATCH.bat {input}'           # DT обрабатывает OPU table (передаётся аргументом)
+    input_target: ""                           # если RUN_BATCH.bat НЕ берёт аргумент — впишите сюда
+                                               # путь, куда DT ждёт вход, и мы скопируем туда OPU table
+    results_dir: "C:/Users/User/Desktop/IVF/AI/IVF Digital Twin Pro/IVF Digital Twin/results"
+  tabpfn:
+    launch: true
+    mode: batch                                # headless-батч без браузера (run_tabpfn_batch.py)
+    project_dir: "C:/Users/User/Desktop/IVF/AI/TABPFN"
+    run_cmd: 'run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
+    results_dir: "C:/Users/User/Desktop/IVF/AI/TABPFN/tabpfn_logs"
+    predictions_glob: "tabpfn_predictions*.csv"
+    output: "data/processed/tabpfn_predictions.csv"
+    # Альтернатива без headless: mode: server + run_cmd: 'run_tabpfn.bat' + timeout_s: 900
+    # (откроется Streamlit, пайплайн подождёт свежий файл предсказаний).
+  dnn_verifier:                                 # обычная DNN (Evo_calculations.py, TensorFlow)
+    enabled: false
+    project_dir: "C:/Users/User/PycharmProjects/pythonProject"
+    model_path: "C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/my_best_model"
+    run_cmd: '"C:/Users/User/Desktop/IVF/AI/venv/Scripts/python.exe" "C:/Users/User/Desktop/IVF/AI/embryo-lab-data/external/dnn/Evo_calculations.py" --input {input} --model {model} --scaler {scaler} --output {output}'
+    output: "data/processed/evo_predictions.csv"
+    scaler_path: "C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/training_scaler.joblib"
+  tabpfn_regression:                             # TabPFN-3: количественный прогноз стадий (MII/2PN/Bl/Good Bl/Frozen)
+    enabled: true                                # мягкий сбой: при ошибке шаг пропускается, остальной пайплайн продолжается
+    project_dir: "C:/Users/User/PycharmProjects/pythonProject/tabpfn"
+    run_cmd: '"C:/Users/User/PycharmProjects/pythonProject/tabpfn/.venv/Scripts/python.exe" tabpfn3_ivf_regression_report_CPU_16K.py --opu-path {input} --output-csv {output}'
+    output: "data/processed/local_private/tabpfn_regression_full.csv"  # полный ФИО/DOB на выходе скрипта -> только local_private
+
+
+thresholds:
+  tabpfn_ci_width_pp: 20        # ширина CI TabPFN (пп) -> запуск форензика логов MIRI
+  cultivation_window_days: 6    # окно культивирования: Date OPU .. +6 дней
+
+privacy:
+  secret_file: "data/processed/local_private/cycle_uid.key"
+  crosswalk_file: "data/processed/local_private/cycle_uid_crosswalk.csv"
+
+amh_impute:                     # PLACEHOLDER (подтверждён владельцем): age+AFC+OCC
+  a_afc: 0.16
+  b_occ: 0.05
+  c_age: 0.08
+  intercept: 0.5
+  floor: 0.1
+  ceil: 12.0
+
+bmi_impute:
+  constant: 24.0
+
+# Ключ джойна OPU <-> DT <-> TabPFN (паспортный ID). Нормализуется strip+upper.
+join:
+  dt_key: "_key"          # в dt_analytics_*; fallback -> patient_id
+  opu_key: "ID"
+  tabpfn_key: "patient_id"
+
+
+miri_logs:                       # логи инкубатора MIRI (вложенная структура папок)
+  base_dir: "data/miri_logs"
+  incubator: "6391"              # …/miri_logs/6391/Miri-6391-Incubation-[YYMMDD-YYMMDD]/Data/*.csv
+  sep: ";"
+  datetime_format: "%Y.%m.%d %H:%M:%S"
+  setpoints: {temp: 37.0, co2: 6.5, o2: 5.0}
+  tolerances: {temp: 0.5, co2: 0.3, o2: 0.5}
+  temp_sensors: 12               # 6 камер × 2 датчика
+
+consumable_lots:                 # смена лотов расходников (Airtable), форензик окна культивирования
+  enabled: false                 # true выставляется в settings.local.yaml вместе с token
+  airtable:
+    base_id: "appTnM9Hp4x4jecrW"
+    items_table_id: "tbldCKiYM7K6tsfQO"      # расходные материалы
+    changes_table_id: "tblyzvKNM40cjqqIr"    # Barcode Changes History
+    token: ""                    # НЕ коммитить реальный PAT — только в settings.local.yaml
+
+pgt:                              # отчёты ПГТ-А (eMap Cycle Report), личный кабинет pa.ivf.uz
+  enabled: false                 # true после того как reports_dir наполнен и промодуль проверен
+  portal_url: "https://pa.ivf.uz/orders"   # только для интерактивного браузерного шага, не API
+  # PDF скачиваются вручную/интерактивно (Claude-браузер) по имени пациента когорты
+  # review-list ∪ известный исход переноса — сюда, никогда не коммитится (PHI внутри PDF).
+  reports_dir: "data/processed/local_private/pgt_reports"
+
+analytics:
+  datalore_notebook_reference: "notebooks/reference/Data_Twin_analytics.ipynb"
+  primary_prob_col: ["DIGITAL TWIN", "bayes_mean", "p_per_transfer"]  # для флагов consult.py
+
+selected_features:              # для DT-модели, дословно, порядок важен
+  - "Возраст"
+  - "№ попытки"
+  - "Количество фолликулов"
+  - "Число ОКК"
+  - "Число инсеминированных"
+  - "2 pN"
+  - "Число дробящихся на 3 день"
+  - "Число Bl"
+  - "Число Bl хор.кач-ва"
+  - "Частота оплодотворения"
+  - "Частота дробления"
+  - "Частота формирования бластоцист"
+  - "Частота формирования бластоцист хорошего качества"
+  - "Частота получения ОКК"
+  - "Число эмбрионов 5 дня"
+  - "Заморожено эмбрионов"
+  - "Перенесено эмбрионов"
+  - "KPIScore"                 # model-only alias of Model_KPIScore at the DT boundary

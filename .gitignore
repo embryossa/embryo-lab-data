@@ -1,0 +1,28 @@
+# --- PHI: сырьё с ФИО/ДР/ID НИКОГДА не коммитим ---
+data/raw/
+data/inbox/
+data/miri_logs/
+data/processed/
+!data/raw/.gitkeep
+!data/inbox/.gitkeep
+!data/miri_logs/.gitkeep
+!data/processed/.gitkeep
+crosswalk.*
+dupe_check.csv
+
+# машинно-зависимые абсолютные пути (Desktop-папки DT/TabPFN/KAN):
+config/settings.local.yaml
+
+# Python / окружение
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# внешние выходы/модели
+*.joblib
+*.pyd

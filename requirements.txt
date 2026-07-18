@@ -1,0 +1,17 @@
+# Окружение ТОЛЬКО для детерминированных ядер этого проекта.
+# torch / tabpfn / IVF Digital Twin / KAN живут в СВОИХ окружениях — сюда не ставятся.
+pandas>=2.0
+numpy>=1.24
+openpyxl>=3.1
+python-calamine>=0.2
+PyYAML>=6.0
+scipy>=1.11          # аналитика: статистика воронки/сравнений
+scikit-learn>=1.3    # калибровка: roc_auc_score, brier_score_loss
+networkx>=3.0         # отчёт: граф сходства пациентов (Similar Cases)
+plotly>=5.18         # полностью локальные интерактивные графики в HTML
+joblib>=1.3          # контракт scaler независимой DNN
+requests>=2.31       # Airtable REST API: смена лотов расходников
+pymupdf>=1.24        # парсинг ПГТ-А PDF (eMap Cycle Report) — pdfplumber не читает
+                     # встроенный кириллический шрифт отчёта, PyMuPDF даёт чистый
+                     # построчный текст для остальных (латинских/числовых) полей
+pytest>=8.0          # приёмочные тесты проекта

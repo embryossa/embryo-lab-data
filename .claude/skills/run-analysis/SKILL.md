@@ -1,0 +1,73 @@
+---
+name: run-analysis
+description: End-to-end IVF laboratory run from inbox through external DT/TabPFN, local joins, KPI, MIRI, pseudonymized agent review and reports.
+---
+# Полный запуск анализа
+
+1. Из корня проекта выполни `python scripts/run_analysis.py $ARGUMENTS` (первый проход;
+   если MIRI-логи для нужного окна ещё не синхронизированы локально, `miri_summary`
+   просто отметит их отсутствием по этим `cycle_uid` — это не блокирует остальной пайплайн).
+2. Не продолжай клиническую интерпретацию, если оркестратор завершился ошибкой контракта,
+   не создал `dt_predictions.csv` или указал, что DNN недействительна из-за scaler.
+2a. MIRI из Google Drive (коннектор MCP, интерактивно — не headless Python): открой
+    `review_list.csv`, возьми оттуда только `cycle_uid` + `Date OPU` (это уже локальный
+    файл, не агентский пакет — ID/ФИО там и так нет). Для каждой даты вычисли окно
+    `Date OPU .. +cultivation_window_days` и определи, какие папки
+    `Miri-6391-Incubation-[YYMMDD-YYMMDD]` в шаренной папке Google Drive пересекаются
+    с этим окном (folder id в `config/settings.local.yaml: miri_logs.google_drive_folder_id`).
+    Через `mcp__claude_ai_Google_Drive__search_files` с `parentId = '<folder_id>'` найди
+    пересекающиеся неделные подпапки, затем их `Data`-подпапку; скачай отсутствующие/более
+    новые `*.csv` через `download_file_content` и запиши в
+    `data/miri_logs/6391/<та же папка>/Data/<тот же файл>.csv` (структура зеркальна —
+    просто копия путей). Не скачивай папки вне пересекающихся окон — весь архив Drive
+    качать не нужно. Если это не первый прогон и нужные папки уже локальны и не новее
+    Drive-версии — пропусти скачивание.
+    Если после этого шага появились новые/обновлённые MIRI CSV — перезапусти
+    `python scripts/run_analysis.py $ARGUMENTS --dt-output <результат DT из первого
+    прохода> --tabpfn-output <результат TabPFN из первого прохода>` (детерминированный
+    replay без повторного запуска внешних DT/TabPFN — пересчитается только MIRI/lots/
+    аналитика/отчёты с уже подтянутыми логами).
+2b. ПГТ-А из личного кабинета pa.ivf.uz (claude-in-chrome, интерактивно — не headless):
+    гейт `pgt.enabled` в `config/settings.yaml`. Собери когорту локально: cycle_uid +
+    `Patient Full Name` + `Date OPU`/`Date ET` из `data/processed/review_list.csv`
+    ∪ `data/processed/local_private/model_input.xlsx` (полная когорта с известным
+    исходом переноса) — это уже локальные файлы, не агентский пакет. Для каждого
+    пациента, у которого ещё нет файла в `pgt.reports_dir`, зайди в
+    `https://pa.ivf.uz/orders`, найди по ФИО (склеенные Имя+Фамилия без пробела —
+    формат `Subject ID` портала), и если статус `Provided` — скачай PDF в
+    `pgt.reports_dir` (`data/processed/local_private/pgt_reports/`, никогда не
+    коммитится). Имя файла не имеет значения — `pgt.analyze_reports` сопоставляет
+    отчёт с `cycle_uid` по `Subject ID` внутри самого PDF, разрешая повторные попытки
+    одной пациентки через окно `Date OPU..Date ET`. Пациентов без ПГТ или без
+    готового результата — пропусти. После скачивания перезапусти тем же
+    `--dt-output/--tabpfn-output` replay-командой (шаг 2a) — пересчитается PGT вместе
+    с MIRI/lots.
+3. Агентам разрешено читать только `data/processed/agent_packets/`. Файлы OPU,
+   crosswalk, исходные таблицы и локальные результаты с ID/ФИО не передавать агентам.
+4. Запусти роли по порядку: kpi-analyst, incubator-forensics, consumable-lots-forensics,
+   pgt-forensics, dt-narrator для review-list, затем lead-analyst. Все промежуточные
+   роли используют Haiku; lead-analyst — Opus.
+   Для dt-narrator: возьми список `cycle_uid` из `review_list.csv` (он же в
+   `analysis_bundle.json`), раздели его на пачки по 8–10 и вызови dt-narrator один раз на
+   каждую пачку, передав ей в задании ровно её список `cycle_uid` (не по одному вызову на
+   пациента). Пачки независимы — можно вызывать параллельно. При <=10 пациентах в
+   review-list это один вызов.
+5. Числа не пересчитывать в LLM. Итоговые гипотезы отделять от установленных фактов.
+6. Обратное сопоставление `cycle_uid → ID/ФИО` выполняется только локальным Python при
+   формировании окончательного XLSX/HTML, никогда не в контексте Claude.
+7. Сохрани итог Opus в `data/processed/agent_packets/lead_analysis.md` и запусти
+   `python scripts/finalize_report.py`.
+
+Основные результаты: `dt_predictions.csv`, `OPU_table_enriched.xlsx`,
+`review_list.csv`, `miri_events.csv`, `lot_events.csv`, `pgt_summary.csv`,
+`pgt_embryo_events.csv`, `ozema_cycles.csv`,
+`ozema_genetic_counseling_candidates.csv`, `DT_Analytics_Report.xlsx`,
+`DT_Analytics_Report.html` (вкладки: Обзор, KPI эмбриологов, KPI врачей, Модели и
+калибровка (боксплот прогнозов по всем моделям + KAT vs PRAI, стиль
+notebooks/reference/Data_Twin_analytics.ipynb), Кластерный анализ (donut/профиль/
+исходы/P(беременность) по кластерам), Похожие случаи (граф сходства пациентов,
+Similar Cases, Mann-Whitney intra/inter-cluster), Прогноз беременности
+(PRAI+Digital Twin, воронка — из TabPFN-3 regression P50 этого отчёта),
+TabPFN-3: прогноз протокола (per-stage P10-P90 QA), Review-list, MIRI 6391,
+Партии расходников, OZEMA, Итоговая
+интерпретация; стиль/палитра — Claude.ai warm/clay), `run_manifest.json`.

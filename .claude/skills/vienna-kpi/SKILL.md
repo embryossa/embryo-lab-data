@@ -1,0 +1,52 @@
+---
+name: vienna-kpi
+description: Vienna Consensus KPI definitions, formulas, lower control limits (LCL) and competence benchmarks for IVF embryology lab performance. Preload into agents that evaluate laboratory KPI against benchmarks.
+---
+# Vienna Consensus KPI (PMID 28784335)
+
+Формулы (реализованы в src/embryo/kpi.py):
+- FR    = 2pN / MII при известном MII, иначе 2pN / Inseminated (в лаборатории все циклы ICSI)
+- ClR   = дробящиеся / 2pN       — частота дробления
+- BlR   = Bl / 2pN               — частота формирования бластоцист
+- TGBDR = Good Bl / 2pN          — частота хороших бластоцист
+- OCCR  = OCC / follicles        — частота получения ОКК
+- MIIR  = MII / OCC              — maturity rate; только при фактически известном MII
+- 3pNR  = 3pN / OCC ;  DegR = Degrade / MII
+
+Для FR/ClR/BlR/TGBDR/OCCR/MIIR контроль нижний: значение ниже порога = сигнал.
+Для DegR и 3pNR контроль верхний: значение выше порога = сигнал. В отчёте всегда
+показываются direction, competency, benchmark и 95% CI. FR benchmark фиксирован 75%.
+
+Пороги: OCCR 70%/85% (нижние границы диапазонов опроса Vienna), MIIR 75%/90%,
+FR 65%/75% (competency Vienna ICSI + принятый владельцем локальный benchmark),
+ClR 95%/99%, BlR D5 40%/60%, TGBDR D5 30%/40%, DegR ≤10%/≤5%,
+3pNR <9%/<4.5% как верхний reference indicator. Не называть OCCR/MIIR/3pNR
+формальными Vienna KPI: их класс явно хранится в `indicator_class`.
+
+`Model_KPIScore` — композитный признак модели (возраст, фолликулы,
+инсеминированные, FR, хорошие Bl); он точно повторяет формулу обучения и НЕ является
+лабораторным KPI Vienna. На границе старой модели допустим алиас `KPIScore`.
+KPI_ADJUSTMENTS: KPIScore -> (prob, CI) как быстрая KPI-оценка, независимая от DT/TabPFN.
+
+Когортный показатель — только Σ numerator / Σ denominator, не среднее процентов строк.
+Ноль — наблюдение; отсутствие — NaN. Не назначать протоколы — только интерпретация.
+
+## Раздельные таблицы эмбриолог/врач
+
+`kpi.EMBRYOLOGIST_METRICS = (FR, ClR, BlR, TGBDR, DegR, 3pNR)`,
+`kpi.DOCTOR_METRICS = (OCCR, MIIR)`. Это ДВЕ отдельные таблицы — эмбриолог отвечает за
+всё после получения ОКК, врач только за получение ОКК и зрелость. Никогда не сравнивать
+доктора с эмбриологом по разным метрикам в одном выводе и не строить общую
+таблицу/рейтинг, где оба типа персонала стоят рядом по разным KPI.
+
+Обе таблицы считаются на расширенной lab-популяции (без гейта transferred>0/Preg
+известен — в отличие от когортного/срезового KPI), из которой
+`kpi.competency_exclusion_mask` убирает: открытые циклы без известного Bl (ещё в
+культивировании), NO-retrieval, freeze-all (Cryo). Токены — в
+`config/columns.yaml: competency_exclusion`. Это исключение действует ТОЛЬКО для этих
+двух таблиц — нигде больше в пайплайне (ни в когортном KPI, ни в review-list, ни в
+OZEMA) оно не применяется.
+
+Ниже уровня компетентности (`competency_met == False`) — отдельный абзац «Поводы
+задуматься» под таблицей, а не встроенная в таблицу оценка; формулировка — наблюдение
+("повод для дополнительного разбора"), не вывод о конкретном специалисте.
