@@ -10,8 +10,11 @@ data/processed/
 crosswalk.*
 dupe_check.csv
 
-# машинно-зависимые абсолютные пути (Desktop-папки DT/TabPFN/KAN):
+# машинно-зависимые абсолютные пути (Desktop-папки DT/TabPFN/KAN), общие для всех клиник:
+config/machine.local.yaml
+# клиничные секреты/флаги (Airtable/PGT токены и т.п.):
 config/settings.local.yaml
+config/clinics/*/settings.local.yaml
 
 # Python / окружение
 venv/

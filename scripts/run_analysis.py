@@ -50,10 +50,20 @@ def _merge(base: dict, override: dict) -> dict:
 def _settings(config_dir: Path) -> dict:
     with (config_dir / "settings.yaml").open(encoding="utf-8") as stream:
         cfg = yaml.safe_load(stream)
+    # config/machine.local.yaml — машинно-зависимые пути к внешним инструментам
+    # (DT/TabPFN/DNN/TabPFN-3), ОБЩИЕ для всех клиник на этом ПК. Подмешивается
+    # раньше клиничного settings.local.yaml, чтобы редкий клиничный override
+    # (напр. отдельный run_cmd) мог выиграть при необходимости. Единственный файл,
+    # который нужно поменять при переносе всего проекта на новую машину — см.
+    # config/machine.local.yaml.example.
+    machine_cfg = ROOT / "config" / "machine.local.yaml"
+    if machine_cfg.exists():
+        with machine_cfg.open(encoding="utf-8") as stream:
+            _merge(cfg, yaml.safe_load(stream) or {})
     local = config_dir / "settings.local.yaml"
     if local.exists():
         with local.open(encoding="utf-8") as stream:
-            _merge(cfg, yaml.safe_load(stream))
+            _merge(cfg, yaml.safe_load(stream) or {})
     return cfg
 
 

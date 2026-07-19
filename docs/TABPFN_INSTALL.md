@@ -1,8 +1,8 @@
 # Установка batch-адаптера TabPFN
 
-Скопируйте два файла из `external/tabpfn/` в:
-
-`C:\Users\User\Desktop\IVF\AI\TABPFN\`
+Скопируйте два файла из `external/tabpfn/` в папку существующего проекта TabPFN
+на этом ПК (её путь задаётся в `config/machine.local.yaml:
+external_tools.tabpfn.project_dir`, см. `config/machine.local.yaml.example`):
 
 - `run_tabpfn_batch.py`
 - `run_tabpfn_batch.bat`

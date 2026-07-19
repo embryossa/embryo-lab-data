@@ -5,6 +5,12 @@ blocking=False — фоновый запуск (Popen) для серверов (
 from __future__ import annotations
 import os
 import subprocess
+from pathlib import Path
+
+# Корень ЭТОГО репозитория (не внешнего проекта) — доступен run_cmd как {repo_root},
+# чтобы команды, вызывающие скрипты внутри embryo-lab-data (напр. external/dnn/...),
+# не зашивали абсолютный путь репозитория и переживали перенос проекта на другую машину.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _subst(cmd, input_path, output_path):
@@ -12,6 +18,8 @@ def _subst(cmd, input_path, output_path):
         cmd = cmd.replace("{input}", f'"{input_path}"')
     if output_path and "{output}" in cmd:
         cmd = cmd.replace("{output}", f'"{output_path}"')
+    if "{repo_root}" in cmd:
+        cmd = cmd.replace("{repo_root}", str(_REPO_ROOT))
     return cmd
 
 

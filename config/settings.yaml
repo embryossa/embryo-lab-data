@@ -1,6 +1,9 @@
-# config/settings.yaml — параметры проекта. Абсолютные машинно-зависимые пути
-# (Desktop-папки DT/TabPFN/KAN) выносите в config/settings.local.yaml (в .gitignore),
-# он переопределяет значения отсюда. Так проект остаётся переносимым.
+# config/settings.yaml — параметры проекта. Абсолютные машинно-зависимые пути к
+# внешним инструментам (DT/TabPFN/DNN/TabPFN-3) вынесены в config/machine.local.yaml
+# (в .gitignore, общий для ВСЕХ клиник) — см. config/machine.local.yaml.example.
+# Клиничные секреты/флаги (токены, enabled) — в config/settings.local.yaml (в
+# .gitignore, только для этой клиники). Ни один из них здесь не хранится, поэтому
+# этот файл переносится в git как есть без правок при переезде на новую машину.
 
 paths:
   # Папки ВНУТРИ проекта (обозначены для Claude Code):
@@ -14,35 +17,38 @@ paths:
 
 external_tools:
   # Всё запускается АВТОМАТИЧЕСКИ из /run-analysis. {input} = таблица из data/inbox (OPU table).
+  # project_dir/results_dir/model_path/scaler_path/run_cmd (машинно-зависимые абсолютные
+  # пути) заданы в config/machine.local.yaml — здесь только переносимая структура и
+  # безопасные дефолты; пустая строка "" означает "заполните config/machine.local.yaml".
   digital_twin:
     launch: true
     mode: batch                                # RUN_BATCH.bat завершается сам (без интерфейса)
-    project_dir: "C:/Users/User/Desktop/IVF/AI/IVF Digital Twin Pro/IVF Digital Twin"
+    project_dir: ""
     run_cmd: 'RUN_BATCH.bat {input}'           # DT обрабатывает OPU table (передаётся аргументом)
     input_target: ""                           # если RUN_BATCH.bat НЕ берёт аргумент — впишите сюда
                                                # путь, куда DT ждёт вход, и мы скопируем туда OPU table
-    results_dir: "C:/Users/User/Desktop/IVF/AI/IVF Digital Twin Pro/IVF Digital Twin/results"
+    results_dir: ""
   tabpfn:
     launch: true
     mode: batch                                # headless-батч без браузера (run_tabpfn_batch.py)
-    project_dir: "C:/Users/User/Desktop/IVF/AI/TABPFN"
+    project_dir: ""
     run_cmd: 'run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
-    results_dir: "C:/Users/User/Desktop/IVF/AI/TABPFN/tabpfn_logs"
+    results_dir: ""
     predictions_glob: "tabpfn_predictions*.csv"
     output: "data/processed/tabpfn_predictions.csv"
     # Альтернатива без headless: mode: server + run_cmd: 'run_tabpfn.bat' + timeout_s: 900
     # (откроется Streamlit, пайплайн подождёт свежий файл предсказаний).
   dnn_verifier:                                 # обычная DNN (Evo_calculations.py, TensorFlow)
     enabled: false
-    project_dir: "C:/Users/User/PycharmProjects/pythonProject"
-    model_path: "C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/my_best_model"
-    run_cmd: '"C:/Users/User/Desktop/IVF/AI/venv/Scripts/python.exe" "C:/Users/User/Desktop/IVF/AI/embryo-lab-data/external/dnn/Evo_calculations.py" --input {input} --model {model} --scaler {scaler} --output {output}'
+    project_dir: ""
+    model_path: ""
+    run_cmd: ""                                # шаблон с {model}/{scaler}/{repo_root} -> config/machine.local.yaml
     output: "data/processed/evo_predictions.csv"
-    scaler_path: "C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/training_scaler.joblib"
+    scaler_path: ""
   tabpfn_regression:                             # TabPFN-3: количественный прогноз стадий (MII/2PN/Bl/Good Bl/Frozen)
     enabled: true                                # мягкий сбой: при ошибке шаг пропускается, остальной пайплайн продолжается
-    project_dir: "C:/Users/User/PycharmProjects/pythonProject/tabpfn"
-    run_cmd: '"C:/Users/User/PycharmProjects/pythonProject/tabpfn/.venv/Scripts/python.exe" tabpfn3_ivf_regression_report_CPU_16K.py --opu-path {input} --output-csv {output}'
+    project_dir: ""
+    run_cmd: ""                                 # шаблон -> config/machine.local.yaml
     output: "data/processed/local_private/tabpfn_regression_full.csv"  # полный ФИО/DOB на выходе скрипта -> только local_private
 
 

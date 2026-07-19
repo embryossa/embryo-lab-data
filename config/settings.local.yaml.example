@@ -1,20 +1,12 @@
 # Скопируйте в config/settings.local.yaml и подставьте под свой ПК (в .gitignore).
+#
+# Абсолютные пути к DT/TabPFN/DNN/TabPFN-3 (project_dir/results_dir/model_path/
+# scaler_path/run_cmd) сюда НЕ ходят — они в config/machine.local.yaml (см.
+# config/machine.local.yaml.example), общем для всех клиник. Здесь только то,
+# что специфично именно для клиники A: DNN-флаг, MIRI-источник, Airtable-токен.
 external_tools:
-  digital_twin:
-    run_cmd: 'RUN_BATCH.bat {input}'
-    # input_target: "C:/.../IVF Digital Twin/input/OPU_table.xlsx"   # если bat не берёт аргумент
-    results_dir: "C:/Users/User/Desktop/IVF/AI/IVF Digital Twin Pro/IVF Digital Twin/results"
-  tabpfn:
-    mode: batch
-    run_cmd: 'run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
-    results_dir: "C:/Users/User/Desktop/IVF/AI/TABPFN/tabpfn_logs"
-    output: "data/processed/tabpfn_predictions.csv"
   dnn_verifier:
     enabled: true
-    model_path: "C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/my_best_model"
-    scaler_path: "C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/training_scaler.joblib"
-    run_cmd: '"C:/Users/User/Desktop/IVF/AI/venv/Scripts/python.exe" "C:/Users/User/Desktop/IVF/AI/embryo-lab-data/external/dnn/Evo_calculations.py" --input {input} --model {model} --scaler {scaler} --output {output}'
-    output: "data/processed/evo_predictions.csv"
 
 # Если Google Drive for desktop синхронизирует папку Miri локально, укажите её корень.
 miri_logs:

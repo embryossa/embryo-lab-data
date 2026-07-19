@@ -1,8 +1,12 @@
 # config/clinics/fertimed/settings.yaml — параметры прогона для клиники Fertimed.
 # Зеркалит структуру config/settings.yaml (клиника A), но это НЕЗАВИСИМЫЙ файл —
-# правки здесь не влияют на клинику A и наоборот. Машинно-зависимые/секретные
-# значения (Airtable/PGT токены) — только в
-# config/clinics/fertimed/settings.local.yaml (в .gitignore), см. .example.
+# правки здесь не влияют на клинику A и наоборот. Абсолютные машинно-зависимые
+# пути к внешним инструментам (DT/TabPFN/DNN/TabPFN-3) — в config/machine.local.yaml
+# (в .gitignore, ОБЩИЙ файл для всех клиник на этом ПК, см.
+# config/machine.local.yaml.example) — тот же внешний проект/окружение, что и у
+# клиники A, задаётся один раз. Клиничные секреты/флаги (Airtable/PGT токены,
+# enabled) — только в config/clinics/fertimed/settings.local.yaml (в .gitignore),
+# см. .example.
 #
 # Обоснование каждого пункта ниже — docs/FERTIMED.md.
 
@@ -19,38 +23,37 @@ external_tools:
   # Тот же внешний проект IVF Digital Twin, что и у клиники A — фильтрация по
   # "_key" (Номер карты пациента + Дата пункции) в run_analysis.py уже
   # изолирует строки текущего прогона от накопленной истории инструмента.
+  # project_dir/results_dir/model_path/scaler_path/run_cmd -> config/machine.local.yaml
+  # (общий для всех клиник; ".\" run_cmd-фикс NoDefaultCurrentDirectoryInPath тоже там).
   digital_twin:
     launch: true
     mode: batch
-    project_dir: "C:/Users/User/Desktop/IVF/AI/IVF Digital Twin Pro/IVF Digital Twin"
-    # ".\" префикс: на этом ПК включена политика Windows
-    # (NoDefaultCurrentDirectoryInPath), голое имя батника через cmd.exe не резолвится
-    # (тот же фикс, что в settings.local.yaml клиники A).
-    run_cmd: '.\RUN_BATCH.bat {input}'
+    project_dir: ""
+    run_cmd: 'RUN_BATCH.bat {input}'
     input_target: ""
-    results_dir: "C:/Users/User/Desktop/IVF/AI/IVF Digital Twin Pro/IVF Digital Twin/results"
+    results_dir: ""
   tabpfn:
     launch: true
     mode: batch
-    project_dir: "C:/Users/User/Desktop/IVF/AI/TABPFN"
-    run_cmd: '.\run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
-    results_dir: "C:/Users/User/Desktop/IVF/AI/TABPFN/tabpfn_logs"
+    project_dir: ""
+    run_cmd: 'run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
+    results_dir: ""
     predictions_glob: "tabpfn_predictions*.csv"
     output: "data/processed/fertimed/tabpfn_predictions.csv"   # отдельный файл от клиники A
   # Владелец подтвердил (2026-07-18): та же DNN и то же окружение, что у
   # клиники A — не отдельная модель, как предполагалось изначально.
   dnn_verifier:
     enabled: true
-    project_dir: "C:/Users/User/PycharmProjects/pythonProject"
-    model_path: "C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/my_best_model"
-    run_cmd: '"C:/Users/User/Desktop/IVF/AI/venv/Scripts/python.exe" "C:/Users/User/Desktop/IVF/AI/embryo-lab-data/external/dnn/Evo_calculations.py" --input {input} --model {model} --scaler {scaler} --output {output}'
+    project_dir: ""
+    model_path: ""
+    run_cmd: ""
     output: "data/processed/fertimed/evo_predictions.csv"
-    scaler_path: "C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/training_scaler.joblib"
+    scaler_path: ""
   # Владелец подтвердил (2026-07-18): тот же TabPFN-3 regression, что у клиники A.
   tabpfn_regression:
     enabled: true
-    project_dir: "C:/Users/User/PycharmProjects/pythonProject/tabpfn"
-    run_cmd: '"C:/Users/User/PycharmProjects/pythonProject/tabpfn/.venv/Scripts/python.exe" tabpfn3_ivf_regression_report_CPU_16K.py --opu-path {input} --output-csv {output}'
+    project_dir: ""
+    run_cmd: ""
     output: "data/processed/fertimed/local_private/tabpfn_regression_full.csv"
 
 thresholds:

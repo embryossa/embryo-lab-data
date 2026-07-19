@@ -89,15 +89,18 @@ OZEMA · Итоговая интерпретация. Полностью лок�
   Python при формировании финального XLSX/HTML — никогда в контексте Claude.
 - Сырые данные (`data/raw/`, `data/inbox/`, `data/miri_logs/`,
   `data/processed/` целиком, включая `local_private/` с ПГТ-PDF и crosswalk)
-  и `config/settings.local.yaml` — в `.gitignore`, в этом репозитории их нет.
-  Переносите их на новую машину отдельно и вручную, вне git.
+  а также `config/machine.local.yaml` и `config/settings.local.yaml` /
+  `config/clinics/*/settings.local.yaml` — в `.gitignore`, в этом репозитории их
+  нет. Переносите их на новую машину отдельно и вручную, вне git.
 
 ## Структура репозитория
 
 ```
-config/            settings.yaml (переносимые параметры) + columns.yaml
-                    (схема колонок) + settings.local.yaml.example (шаблон
-                    машинно-зависимого локального конфига)
+config/            settings.yaml (переносимые параметры) + columns.yaml (схема
+                    колонок) + clinics/<name>/ (отдельный settings.yaml на
+                    клинику) + machine.local.yaml.example (шаблон машинных
+                    путей DT/TabPFN/DNN/TabPFN-3, общий для ВСЕХ клиник) +
+                    settings.local.yaml.example (шаблон клиничных секретов/флагов)
 src/embryo/         ядро пайплайна (ingest, normalize, kpi, incubator, lots,
                     pgt, ozema, analytics, reconcile, contracts, privacy,
                     report, *_runner.py — адаптеры внешних инструментов)
@@ -132,27 +135,39 @@ pip install -r requirements.txt
 
 ### 2. Локальный конфиг
 
+Машинные абсолютные пути к внешним инструментам (DT/TabPFN/DNN/TabPFN-3) —
+**один файл на весь ПК**, общий для всех клиник:
+
 ```powershell
-copy config\settings.local.yaml.example config\settings.local.yaml
+copy config\machine.local.yaml.example config\machine.local.yaml
 ```
 
-Заполните под новую машину:
+Заполните все `project_dir`/`results_dir`/`model_path`/`scaler_path`/`run_cmd`
+под новую машину — это единственный файл, который нужно редактировать, если
+меняются только пути (сам репозиторий, обе клиники и config/settings.yaml
+трогать не нужно). Проверить: `python scripts\check_setup.py --all-clinics`.
 
-- Абсолютные пути к внешним проектам (`external_tools.digital_twin.project_dir`,
-  `external_tools.tabpfn.project_dir`, `external_tools.tabpfn_regression.project_dir`,
-  `external_tools.dnn_verifier.*`) — эти инструменты живут вне репозитория,
-  переносятся/устанавливаются отдельно.
+Отдельно — клиничные секреты/флаги (на клинику, НЕ про пути):
+
+```powershell
+copy config\settings.local.yaml.example config\settings.local.yaml
+copy config\clinics\fertimed\settings.local.yaml.example config\clinics\fertimed\settings.local.yaml
+```
+
+Заполните под новую машину/аккаунт:
+
 - `miri_logs.base_dir` или `miri_logs.google_drive_folder_id` — источник
-  логов инкубатора MIRI 6391.
+  логов инкубатора MIRI 6391 (клиника A).
 - `consumable_lots.airtable.token` — Personal Access Token с правами
   `data.records:read`, `schema.bases:read` на нужную Airtable-базу; без него
   форензик по лотам остаётся выключен (`enabled: false`).
-- `pgt.enabled: true` — только когда `data/processed/local_private/pgt_reports/`
-  наполнена и парсинг проверен.
+- `pgt.enabled: true` — только когда соответствующая `local_private/pgt_reports/`
+  наполнена и парсинг проверен (у каждой клиники свой личный кабинет/парсер).
 
-`config/settings.yaml` — версионированная, переносимая часть конфига
-(структура папок, схема join, пороги, feature list для DT). Её менять не
-нужно для переезда на новую машину — только `settings.local.yaml`.
+`config/settings.yaml` и `config/clinics/*/settings.yaml` — версионированная,
+переносимая часть конфига (структура папок, схема join, пороги, feature list
+для DT) и НЕ содержат абсолютных путей. Их менять не нужно для переезда на
+новую машину — только `machine.local.yaml` и клиничные `settings.local.yaml`.
 
 ### 3. Внешние инструменты (устанавливаются/копируются отдельно, не из этого репо)
 
@@ -170,13 +185,14 @@ copy config\settings.local.yaml.example config\settings.local.yaml
 ### 4. Проверка и тесты
 
 ```powershell
-python scripts\check_setup.py
+python scripts\check_setup.py --all-clinics
 pytest -q
 ```
 
 `check_setup.py` проверяет, что все обязательные пути/инструменты видны с
-этой машины. `pytest` гоняет синтетические e2e-фикстуры (`tests/fixtures/`,
-никаких реальных пациентов) и контрактные тесты приватности.
+этой машины (`--all-clinics` — сразу для клиники A и всех `config/clinics/*`;
+`--clinic <name>` — только одна). `pytest` гоняет синтетические e2e-фикстуры
+(`tests/fixtures/`, никаких реальных пациентов) и контрактные тесты приватности.
 
 ### 5. Данные
 

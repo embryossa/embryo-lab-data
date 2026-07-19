@@ -1,0 +1,51 @@
+# config/machine.local.yaml.example — ШАБЛОН машинно-зависимых путей к внешним
+# инструментам (IVF Digital Twin, TabPFN, DNN verifier, TabPFN-3 regression).
+#
+# Скопируйте в config/machine.local.yaml (в .gitignore, не коммитится) и подставьте
+# реальные пути этого ПК. Это ЕДИНСТВЕННЫЙ файл, который нужно поменять при переносе
+# всего проекта (embryo-lab-data + внешние DT/TabPFN/KAN-проекты) на новую машину —
+# он подмешивается ОДИНАКОВО в обе клиники (config/settings.yaml и
+# config/clinics/*/settings.yaml), так что путь к, например, RUN_BATCH.bat
+# указывается один раз, а не отдельно для каждой клиники.
+#
+# config/settings.yaml и config/clinics/*/settings.yaml (версионированные, в git)
+# держат только переносимую логику/структуру и НЕ содержат абсолютных путей —
+# их редактировать при переезде не нужно. Клиничный settings.local.yaml остаётся
+# только для действительно клиничных секретов/флагов (Airtable-токен, pgt.enabled,
+# google_drive_folder_id) — см. config/settings.local.yaml.example и
+# config/clinics/fertimed/settings.local.yaml.example.
+#
+# После заполнения проверьте обе клиники разом:
+#   python scripts\check_setup.py --all-clinics
+
+external_tools:
+  digital_twin:
+    # Папка внешнего проекта IVF Digital Twin (там лежит RUN_BATCH.bat).
+    project_dir: "C:/path/to/IVF Digital Twin Pro/IVF Digital Twin"
+    results_dir: "C:/path/to/IVF Digital Twin Pro/IVF Digital Twin/results"
+    # Если на этом ПК включена политика Windows NoDefaultCurrentDirectoryInPath,
+    # cmd.exe не резолвит голое имя батника через текущую директорию — тогда
+    # раскомментируйте строку с префиксом ".\":
+    # run_cmd: '.\RUN_BATCH.bat {input}'
+
+  tabpfn:
+    # Папка headless-батч-адаптера TabPFN (run_tabpfn_batch.py/.bat) — см.
+    # docs/TABPFN_INSTALL.md, что туда скопировать при первой установке.
+    project_dir: "C:/path/to/TABPFN"
+    results_dir: "C:/path/to/TABPFN/tabpfn_logs"
+    # run_cmd: '.\run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
+
+  dnn_verifier:
+    # ОПЦИОНАЛЬНАЯ независимая DNN (Evo_calculations.py) — своё окружение/torch.
+    project_dir: "C:/path/to/PycharmProject"
+    model_path: "C:/path/to/PycharmProject/KAN/saved_model/my_best_model"
+    scaler_path: "C:/path/to/PycharmProject/KAN/saved_model/training_scaler.joblib"
+    # Только путь к python.exe нужного venv меняется между машинами;
+    # {repo_root} подставляется автоматически (корень ЭТОГО репозитория) —
+    # его в run_cmd прописывать не нужно.
+    run_cmd: '"C:/path/to/venv/Scripts/python.exe" "{repo_root}/external/dnn/Evo_calculations.py" --input {input} --model {model} --scaler {scaler} --output {output}'
+
+  tabpfn_regression:
+    # TabPFN-3: количественный прогноз стадий воронки (MII/2PN/Bl/Good Bl/Frozen).
+    project_dir: "C:/path/to/PycharmProject/tabpfn"
+    run_cmd: '"C:/path/to/PycharmProject/tabpfn/.venv/Scripts/python.exe" tabpfn3_ivf_regression_report_CPU_16K.py --opu-path {input} --output-csv {output}'
