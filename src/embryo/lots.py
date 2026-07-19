@@ -253,3 +253,37 @@ def analyze_patients(
     )
     result.attrs["events"] = all_events
     return result
+
+
+def compare_flagged_vs_baseline(summary: pd.DataFrame, flagged_cycle_uids) -> dict:
+    """Compare the lot-change rate between flagged cycles and the rest of the cohort.
+
+    ``summary`` must come from :func:`analyze_patients` run over the FULL dated
+    cohort, not just the flagged subset, mirroring
+    ``incubator.compare_flagged_vs_baseline``. Without this, "a lot changed
+    inside the cultivation window" can't be told apart from ordinary cohort-wide
+    base-rate noise. A cycle with no resolvable timeline data at all (``error``
+    set, e.g. missing Date OPU, or ``note`` "нет данных о лотах" when the whole
+    Airtable timeline came back empty) is excluded from both groups'
+    denominators rather than silently counted as "no lot change".
+    """
+    if summary is None or summary.empty or "cycle_uid" not in summary.columns:
+        return {"flagged": None, "baseline": None, "note": "нет данных"}
+    d = summary.copy()
+    flagged_set = {str(x) for x in flagged_cycle_uids}
+    is_flagged = d["cycle_uid"].astype(str).isin(flagged_set)
+    no_error = d["error"].isna() if "error" in d.columns else pd.Series(True, index=d.index)
+    no_missing_note = (d["note"].astype("string") != "нет данных о лотах") | d["note"].isna() \
+        if "note" in d.columns else pd.Series(True, index=d.index)
+    covered = no_error & no_missing_note
+
+    def _group(mask: pd.Series) -> dict:
+        excluded = int((mask & ~covered).sum())
+        g = d.loc[mask & covered]
+        if g.empty:
+            return {"n": 0, "n_excluded_no_coverage": excluded, "lot_change_rate": None}
+        flag = g["lot_change_flag"].fillna(False).astype(bool) if "lot_change_flag" in g else pd.Series(False, index=g.index)
+        return {"n": int(len(g)), "n_excluded_no_coverage": excluded,
+                "lot_change_rate": float(flag.mean())}
+
+    return {"flagged": _group(is_flagged), "baseline": _group(~is_flagged)}

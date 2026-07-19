@@ -13,6 +13,7 @@ from embryo.incubator import (
     analyze_patients,
     analyze_window,
     analyze_window_events,
+    compare_flagged_vs_baseline,
     cultivation_window,
 )
 
@@ -216,3 +217,43 @@ def test_absent_log_is_a_critical_full_window_gap():
     assert events.loc[0, "severity"] == "critical"
     assert summary["warning"] is True
     assert summary["critical_count"] == 1
+
+
+def test_baseline_comparison_splits_flagged_from_the_rest_of_the_cohort():
+    summary = pd.DataFrame([
+        {"cycle_uid": "cy_flag1", "warning": True, "critical_count": 1},
+        {"cycle_uid": "cy_flag2", "warning": False, "critical_count": 0},
+        {"cycle_uid": "cy_rest1", "warning": False, "critical_count": 0},
+        {"cycle_uid": "cy_rest2", "warning": False, "critical_count": 0},
+        {"cycle_uid": "cy_rest3", "warning": True, "critical_count": 0},
+    ])
+    result = compare_flagged_vs_baseline(summary, ["cy_flag1", "cy_flag2"])
+
+    assert result["flagged"] == {
+        "n": 2, "n_excluded_no_coverage": 0,
+        "warning_rate": pytest.approx(0.5), "critical_rate": pytest.approx(0.5),
+    }
+    assert result["baseline"] == {
+        "n": 3, "n_excluded_no_coverage": 0,
+        "warning_rate": pytest.approx(1 / 3), "critical_rate": pytest.approx(0.0),
+    }
+
+
+def test_baseline_comparison_excludes_cycles_with_no_synced_coverage():
+    # A missing local download ("нет логов") must not be counted as an observed
+    # absence of incubator events in either group's denominator.
+    summary = pd.DataFrame([
+        {"cycle_uid": "cy_flag1", "warning": True, "critical_count": 1, "error": None},
+        {"cycle_uid": "cy_rest1", "warning": False, "critical_count": 0, "error": "нет логов"},
+        {"cycle_uid": "cy_rest2", "warning": False, "critical_count": 0, "error": None},
+    ])
+    result = compare_flagged_vs_baseline(summary, ["cy_flag1"])
+
+    assert result["flagged"]["n"] == 1
+    assert result["baseline"]["n"] == 1
+    assert result["baseline"]["n_excluded_no_coverage"] == 1
+
+
+def test_baseline_comparison_handles_empty_summary():
+    result = compare_flagged_vs_baseline(pd.DataFrame(), ["cy_flag1"])
+    assert result == {"flagged": None, "baseline": None, "note": "нет данных"}

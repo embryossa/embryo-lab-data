@@ -1644,13 +1644,40 @@ def _gap_badge(value) -> str:
     return _badge(label, kind)
 
 
-def _miri_tab(events: pd.DataFrame | None) -> str:
+def _baseline_comparison_html(baseline: dict | None, rate_key: str, label: str) -> str:
+    """Descriptive review-list vs rest-of-cohort rate — not a significance test.
+
+    At this project's per-run cohort sizes a formal test would overclaim; this is
+    deliberately just two rates with their n, so a co-occurrence claim can be
+    weighed against how common the same thing is outside the flagged group.
+    """
+    if not baseline or not baseline.get("flagged") or not baseline.get("baseline"):
+        return ""
+    flagged, base = baseline["flagged"], baseline["baseline"]
+
+    def _fmt(group: dict) -> str:
+        rate = group.get(rate_key)
+        n = group.get("n", 0)
+        return f"н/д (n={n})" if rate is None or not n else f"{rate:.0%} (n={n})"
+
+    excluded = (flagged.get("n_excluded_no_coverage") or 0) + (base.get("n_excluded_no_coverage") or 0)
+    excl_note = f" Исключено из-за отсутствия покрытия данными: {excluded}." if excluded else ""
+    return (f"<p class='muted' style='font-size:11.5px'>{escape(label)}: review-list "
+           f"{escape(_fmt(flagged))} vs остальная когорта (контроль) {escape(_fmt(base))}."
+           f"{escape(excl_note)} Описательное сравнение частот, не тест значимости — "
+           "при малых n не интерпретировать как статистическое доказательство.</p>")
+
+
+def _miri_tab(events: pd.DataFrame | None, miri_baseline: dict | None = None) -> str:
     note = ("<p class='muted' style='font-size:11.5px'>Пропуск логов &lt;8ч трактуется как потеря "
            "возможности ПИСАТЬ логи (например, отключение питания) — реальное неблагоприятное "
            "событие, а не «отсутствие данных». Пропуск ≥8ч означает явную остановку "
            "инкубатора или логирования.</p>")
+    baseline_html = _baseline_comparison_html(
+        miri_baseline, "warning_rate", "Частота MIRI warning/critical в окне культивирования")
     if events is None or events.empty:
-        return note + "<p class='muted'>эпизодов не найдено (логов в окне нет либо отклонений не обнаружено)</p>"
+        return (note + baseline_html
+               + "<p class='muted'>эпизодов не найдено (логов в окне нет либо отклонений не обнаружено)</p>")
     disp = events.copy()
     if "gap_reason" in disp.columns:
         disp["Тип пропуска"] = disp["gap_reason"].map(_gap_badge)
@@ -1659,15 +1686,19 @@ def _miri_tab(events: pd.DataFrame | None) -> str:
              "duration_minutes": "Длительность, мин", "max_deviation": "Макс. отклонение",
              "severity": "Severity", "recovery_time_minutes": "Восстановление, мин"}
     disp = disp.rename(columns={k: v for k, v in rename.items() if k in disp.columns})
-    return note + _manual_table(disp, raw_cols=frozenset({"Тип пропуска"}))
+    return note + baseline_html + _manual_table(disp, raw_cols=frozenset({"Тип пропуска"}))
 
 
 # ---------------------------------------------------------------------------
 # 9. Consumable lots
 # ---------------------------------------------------------------------------
 
-def _lots_tab(lot_summary: pd.DataFrame | None, lot_events: pd.DataFrame | None) -> str:
-    return f"<h3>Сводка по циклам</h3>{_table(lot_summary)}<h3>События смены лота</h3>{_table(lot_events)}"
+def _lots_tab(lot_summary: pd.DataFrame | None, lot_events: pd.DataFrame | None,
+             lot_baseline: dict | None = None) -> str:
+    baseline_html = _baseline_comparison_html(
+        lot_baseline, "lot_change_rate", "Частота смены лота в окне культивирования")
+    return (baseline_html + f"<h3>Сводка по циклам</h3>{_table(lot_summary)}"
+           f"<h3>События смены лота</h3>{_table(lot_events)}")
 
 
 # ---------------------------------------------------------------------------
@@ -1757,6 +1788,8 @@ def build_report(analytics_result: dict, kpi_df: pd.DataFrame,
                  regression_calibration: pd.DataFrame | None = None,
                  ozema_cycles: pd.DataFrame | None = None,
                  ozema_candidates: pd.DataFrame | None = None,
+                 miri_baseline: dict | None = None,
+                 lot_baseline: dict | None = None,
                  out_html="data/processed/DT_Analytics_Report.html") -> dict:
     """Строит полностью локальный HTML. Наличие логов само по себе warning не создаёт."""
     global _plotly_embedded
@@ -1812,8 +1845,8 @@ def build_report(analytics_result: dict, kpi_df: pd.DataFrame,
         _panel("pregnancy", _pregnancy_journal_tab(analytics_result, regression_qc_frame)),
         _panel("regression", _regression_tab(regression_qc_frame, regression_calibration)),
         _panel("review", _review_section(analytics_result, regression_qc_frame, incubator_findings, lot_summary)),
-        _panel("miri", _miri_tab(incubator_events)),
-        _panel("lots", _lots_tab(lot_summary, lot_events)),
+        _panel("miri", _miri_tab(incubator_events, miri_baseline)),
+        _panel("lots", _lots_tab(lot_summary, lot_events, lot_baseline)),
         _panel("ozema", _ozema_tab(ozema_cycles, ozema_candidates)),
         _panel("lead", _lead_tab(lead_analyst_text)),
     ])

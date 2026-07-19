@@ -23,9 +23,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from embryo import (analytics, consult, contracts, dnn_runner, dt_runner, incubator, ingest,
-                    kpi, lots, normalize, opu_table, ozema, pgt, privacy, reconcile, regression_qc,
-                    report, tabpfn_regression_runner, tabpfn_runner)  # noqa: E402
+from embryo import (analytics, consult, contracts, dnn_runner, dt_runner, history, incubator,
+                    ingest, kpi, lots, normalize, opu_table, ozema, pgt, privacy, reconcile,
+                    regression_qc, report, tabpfn_regression_runner, tabpfn_runner)  # noqa: E402
 from embryo import _io  # noqa: E402
 from embryo.clinics import fertimed, fertimed_pgt  # noqa: E402
 
@@ -303,7 +303,8 @@ def _agent_packet(ares: dict, miri_summary: pd.DataFrame, miri_events: pd.DataFr
                   outdir: Path, crosswalk: pd.DataFrame, crosswalk_path: Path,
                   dnn_status: str, regression_status: str,
                   ozema_cycles: pd.DataFrame, ozema_candidates: pd.DataFrame,
-                  pgt_summary: pd.DataFrame, pgt_events: pd.DataFrame) -> Path:
+                  pgt_summary: pd.DataFrame, pgt_events: pd.DataFrame,
+                  miri_baseline: dict | None = None, lot_baseline: dict | None = None) -> Path:
     review = ares["review_list"].copy()
     if review.empty:
         review = ares["df_u"].head(0).copy()
@@ -382,6 +383,11 @@ def _agent_packet(ares: dict, miri_summary: pd.DataFrame, miri_events: pd.DataFr
         "regression_calibration": _records(regression_calibration),
         "ozema_flagged_cycles": ozema_flagged,
         "ozema_genetic_counseling_candidate_patients": ozema_candidate_patients,
+        # Flagged (review-list) vs baseline (rest of the dated cohort) rate, so a
+        # forensics agent can tell a real co-occurrence from cohort-wide base-rate
+        # noise instead of only ever seeing the flagged group in isolation.
+        "miri_baseline_comparison": miri_baseline,
+        "lot_baseline_comparison": lot_baseline,
         **report.build_analysis_summary(ares["df_u"]),
     }
     target = outdir / "analysis_bundle.json"
@@ -542,6 +548,14 @@ def main(argv: list[str] | None = None) -> int:
     review_patients = pd.DataFrame(columns=["cycle_uid", date_col])
     if not ares["review_list"].empty and date_col in ares["review_list"]:
         review_patients = ares["review_list"][["cycle_uid", date_col]].dropna(subset=[date_col]).copy()
+    # Same universe review_list is drawn from (transferred + known outcome), used as
+    # the control/baseline group for MIRI and consumable-lot forensics below: without
+    # it, "an excursion/lot change co-occurred with a flagged cycle" cannot be told
+    # apart from ordinary cohort-wide base-rate noise.
+    dated_cohort = pd.DataFrame(columns=["cycle_uid", date_col])
+    if date_col in kpi_cycles.columns:
+        dated_cohort = (kpi_cycles[["cycle_uid", date_col]].dropna(subset=[date_col])
+                        .drop_duplicates(subset="cycle_uid").copy())
 
     miri_summary = pd.DataFrame(columns=[
         "cycle_uid", "window_start", "window_end", "n_points", "event_count",
@@ -549,6 +563,7 @@ def main(argv: list[str] | None = None) -> int:
         "max_event_duration_minutes", "error",
     ])
     miri_events = pd.DataFrame(columns=incubator.EVENT_COLUMNS)
+    miri_baseline: dict | None = None
     miri_enabled = cfg.get("miri_logs", {}).get("enabled", True)
     if not args.skip_miri and miri_enabled and not review_patients.empty:
         mcfg = cfg["miri_logs"]
@@ -559,14 +574,30 @@ def main(argv: list[str] | None = None) -> int:
             dt_fmt=mcfg.get("datetime_format", "%Y.%m.%d %H:%M:%S"),
             tolerances=mcfg.get("tolerances"))
         miri_events = miri_summary.attrs.get("events", miri_events)
+        if not dated_cohort.empty:
+            # Local-only (globs already-synced MIRI CSVs, no network): free to run
+            # over the full dated cohort, not just review-list, purely to get a
+            # control group for the comparison below.
+            miri_full_summary = incubator.analyze_patients(
+                dated_cohort, str(_project_path(mcfg["base_dir"])), mcfg["incubator"],
+                date_col=date_col, days=cfg["thresholds"]["cultivation_window_days"],
+                setpoints=mcfg.get("setpoints"), sep=mcfg.get("sep", ";"),
+                dt_fmt=mcfg.get("datetime_format", "%Y.%m.%d %H:%M:%S"),
+                tolerances=mcfg.get("tolerances"))
+            miri_baseline = incubator.compare_flagged_vs_baseline(
+                miri_full_summary, review_patients["cycle_uid"])
     _io.atomic_write_csv(miri_summary, processed / "miri_summary.csv")
     _io.atomic_write_csv(miri_events, processed / "miri_events.csv")
+    if miri_baseline is not None:
+        _io.atomic_write_text(json.dumps(miri_baseline, ensure_ascii=False, indent=2),
+                              processed / "miri_baseline.json")
 
     lot_summary = pd.DataFrame(columns=[
         "cycle_uid", "window_start", "window_end", "n_items_tracked",
         "n_items_changed", "changed_items", "lot_change_flag", "error", "note",
     ])
     lot_events = pd.DataFrame(columns=lots.EVENT_COLUMNS)
+    lot_baseline: dict | None = None
     if not args.skip_lots and cfg.get("consumable_lots", {}).get("enabled") and not review_patients.empty:
         items, changes = lots.fetch_consumable_lots(cfg)
         timeline = lots.build_lot_timeline(items, changes)
@@ -574,8 +605,19 @@ def main(argv: list[str] | None = None) -> int:
             review_patients, timeline, date_col=date_col,
             days=cfg["thresholds"]["cultivation_window_days"])
         lot_events = lot_summary.attrs.get("events", lot_events)
+        if not dated_cohort.empty:
+            # The Airtable timeline above is already fetched once for the whole run;
+            # widening the population it is checked against costs no extra API calls.
+            lot_full_summary = lots.analyze_patients(
+                dated_cohort, timeline, date_col=date_col,
+                days=cfg["thresholds"]["cultivation_window_days"])
+            lot_baseline = lots.compare_flagged_vs_baseline(
+                lot_full_summary, review_patients["cycle_uid"])
     _io.atomic_write_csv(lot_summary, processed / "lot_summary.csv")
     _io.atomic_write_csv(lot_events, processed / "lot_events.csv")
+    if lot_baseline is not None:
+        _io.atomic_write_text(json.dumps(lot_baseline, ensure_ascii=False, indent=2),
+                              processed / "lot_baseline.json")
     _io.atomic_write_csv(regression_qc_frame, processed / "regression_qc.csv")
     _io.atomic_write_csv(regression_calibration, processed / "regression_calibration.csv")
 
@@ -624,11 +666,13 @@ def main(argv: list[str] | None = None) -> int:
         lot_summary=lot_summary, lot_events=lot_events,
         regression_qc_frame=regression_qc_frame, regression_calibration=regression_calibration,
         ozema_cycles=ozema_cycles, ozema_candidates=ozema_candidates,
+        miri_baseline=miri_baseline, lot_baseline=lot_baseline,
         out_html=str(html))
     packet = _agent_packet(ares, miri_summary, miri_events, lot_summary, lot_events,
                            regression_qc_frame, regression_calibration,
                            packets, crosswalk, crosswalk_path, dnn_status, regression_status,
-                           ozema_cycles, ozema_candidates, pgt_summary, pgt_events)
+                           ozema_cycles, ozema_candidates, pgt_summary, pgt_events,
+                           miri_baseline, lot_baseline)
 
     artifact_paths = [Path(outputs["dt_predictions"]), Path(outputs["opu"]), xlsx, html,
                       processed / "review_list.csv", processed / "miri_events.csv",
@@ -636,6 +680,10 @@ def main(argv: list[str] | None = None) -> int:
                       processed / "ozema_cycles.csv", processed / "pgt_summary.csv",
                       processed / "pgt_embryo_events.csv",
                       processed / "ozema_genetic_counseling_candidates.csv", packet]
+    if miri_baseline is not None:
+        artifact_paths.append(processed / "miri_baseline.json")
+    if lot_baseline is not None:
+        artifact_paths.append(processed / "lot_baseline.json")
     manifest = {
         "run_id": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
         "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -648,7 +696,17 @@ def main(argv: list[str] | None = None) -> int:
     }
     _io.atomic_write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                           processed / "run_manifest.json")
-    print(f"[done] cycles={ares['n']} review={len(ares['review_list'])} report={html}")
+
+    # Cross-run history: aggregate-only (no cycle_uid, no patient rows), appended to
+    # a jsonl that survives across runs (data/processed is not deleted between runs,
+    # only individual known-named artifacts are overwritten) so KPI/calibration/
+    # forensic trend can be read across many runs instead of re-derived from one.
+    history_record = history.build_record(
+        manifest, kpi_cycles, ares["review_list"], miri_baseline, lot_baseline,
+        regression_calibration, ozema_candidates)
+    history_path = history.append_record(history_record, processed / "run_history.jsonl")
+    print(f"[done] cycles={ares['n']} review={len(ares['review_list'])} report={html} "
+          f"history={history_path}")
     return 0
 
 

@@ -13,6 +13,7 @@ from embryo.lots import (
     analyze_patients,
     analyze_window_events,
     build_lot_timeline,
+    compare_flagged_vs_baseline,
     cultivation_window,
 )
 
@@ -148,3 +149,36 @@ def test_analyze_patients_rejects_direct_identifier_as_the_only_key():
     patients = pd.DataFrame([{"ID": "123", "Date OPU": "2026-01-01"}])
     with pytest.raises(KeyError, match="cycle_uid"):
         analyze_patients(patients, pd.DataFrame())
+
+
+def test_baseline_comparison_splits_flagged_from_the_rest_of_the_cohort():
+    summary = pd.DataFrame([
+        {"cycle_uid": "cy_flag1", "lot_change_flag": True},
+        {"cycle_uid": "cy_flag2", "lot_change_flag": False},
+        {"cycle_uid": "cy_rest1", "lot_change_flag": False},
+        {"cycle_uid": "cy_rest2", "lot_change_flag": False},
+        {"cycle_uid": "cy_rest3", "lot_change_flag": True},
+    ])
+    result = compare_flagged_vs_baseline(summary, ["cy_flag1", "cy_flag2"])
+
+    assert result["flagged"] == {"n": 2, "n_excluded_no_coverage": 0, "lot_change_rate": pytest.approx(0.5)}
+    assert result["baseline"] == {"n": 3, "n_excluded_no_coverage": 0,
+                                  "lot_change_rate": pytest.approx(1 / 3)}
+
+
+def test_baseline_comparison_excludes_cycles_with_no_resolvable_timeline():
+    summary = pd.DataFrame([
+        {"cycle_uid": "cy_flag1", "lot_change_flag": True, "error": None, "note": None},
+        {"cycle_uid": "cy_rest1", "lot_change_flag": False, "error": None, "note": "нет данных о лотах"},
+        {"cycle_uid": "cy_rest2", "lot_change_flag": False, "error": None, "note": None},
+    ])
+    result = compare_flagged_vs_baseline(summary, ["cy_flag1"])
+
+    assert result["flagged"]["n"] == 1
+    assert result["baseline"]["n"] == 1
+    assert result["baseline"]["n_excluded_no_coverage"] == 1
+
+
+def test_baseline_comparison_handles_empty_summary():
+    result = compare_flagged_vs_baseline(pd.DataFrame(), ["cy_flag1"])
+    assert result == {"flagged": None, "baseline": None, "note": "нет данных"}

@@ -709,3 +709,42 @@ def analyze_patients(
     )
     result.attrs["events"] = all_events
     return result
+
+
+def compare_flagged_vs_baseline(summary: pd.DataFrame, flagged_cycle_uids: Iterable[str]) -> dict:
+    """Compare warning/critical rate between flagged cycles and the rest of the cohort.
+
+    ``summary`` must come from :func:`analyze_patients` run over the FULL dated
+    cohort, not just the flagged subset — otherwise there is no control group to
+    compare against. A cycle whose window has no locally synced MIRI log at all
+    (``error`` set, e.g. "нет логов") is excluded from both groups' denominators:
+    a missing local download is a data-coverage gap, not an observed absence of
+    incubator events, and conflating the two would silently inflate whichever
+    group happens to have more unsynced weeks. A window that WAS synced but is
+    empty inside it keeps counting as a real gap event, per the project's fixed
+    MIRI rule that a logging gap is itself an adverse event, not missing data.
+    """
+    if summary is None or summary.empty or "cycle_uid" not in summary.columns:
+        return {"flagged": None, "baseline": None, "note": "нет данных"}
+    d = summary.copy()
+    flagged_set = {str(x) for x in flagged_cycle_uids}
+    is_flagged = d["cycle_uid"].astype(str).isin(flagged_set)
+    covered = d["error"].isna() if "error" in d.columns else pd.Series(True, index=d.index)
+
+    def _group(mask: pd.Series) -> dict:
+        excluded = int((mask & ~covered).sum())
+        g = d.loc[mask & covered]
+        if g.empty:
+            return {"n": 0, "n_excluded_no_coverage": excluded,
+                    "warning_rate": None, "critical_rate": None}
+        warning = g["warning"].fillna(False).astype(bool) if "warning" in g else pd.Series(False, index=g.index)
+        critical = (pd.to_numeric(g.get("critical_count"), errors="coerce").fillna(0) > 0
+                    if "critical_count" in g else pd.Series(False, index=g.index))
+        return {
+            "n": int(len(g)),
+            "n_excluded_no_coverage": excluded,
+            "warning_rate": float(warning.mean()),
+            "critical_rate": float(critical.mean()),
+        }
+
+    return {"flagged": _group(is_flagged), "baseline": _group(~is_flagged)}
