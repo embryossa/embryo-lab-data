@@ -92,15 +92,22 @@ OPU master или полный `dt_predictions.csv`. Финальный XLSX/HTM
 
 ## Внешние инструменты
 
-- Digital Twin: `C:\Users\User\Desktop\IVF\AI\IVF Digital Twin Pro\IVF Digital Twin\RUN_BATCH.bat`.
-- TabPFN: batch adapter из `external/tabpfn/`, установленный в существующий проект TabPFN.
+- Все абсолютные машинные пути к внешним инструментам ниже (Digital Twin, TabPFN,
+  DNN, TabPFN-3 regression) живут ТОЛЬКО в `config/machine.local.yaml` (в
+  .gitignore, общий для всех клиник — см. `config/machine.local.yaml.example`).
+  Этот файл — не место для них; при переезде на новую машину меняется только
+  `config/machine.local.yaml`, этот раздел не устаревает.
+- Digital Twin: проект с `RUN_BATCH.bat` — путь в `external_tools.digital_twin.project_dir`.
+- TabPFN: batch adapter из `external/tabpfn/`, установленный в существующий проект TabPFN
+  — путь в `external_tools.tabpfn.project_dir`.
 - TabPFN-3 regression (количественный прогноз стадий MII/2PN/Bl/Good Bl/Frozen):
-  `C:\Users\User\PycharmProjects\pythonProject\tabpfn\tabpfn3_ivf_regression_report_CPU_16K.py`,
-  своё окружение `.venv` в том же проекте. Гейт `external_tools.tabpfn_regression.enabled`
-  (по умолчанию включён); сбой этого шага мягкий и не блокирует остальной прогон.
-- DNN model: `C:\Users\User\PycharmProjects\pythonProject\KAN\saved_model\my_best_model`;
-  scaler задаётся отдельно в local settings. Текущий `training_scaler.joblib` —
-  реконструкция (2026-07-17, см. `config/settings.local.yaml`), не сохранённый оригинал
+  `tabpfn3_ivf_regression_report_CPU_16K.py`, своё окружение `.venv` в том же
+  проекте — путь в `external_tools.tabpfn_regression.project_dir`. Гейт
+  `external_tools.tabpfn_regression.enabled` (по умолчанию включён); сбой этого
+  шага мягкий и не блокирует остальной прогон.
+- DNN model: путь в `external_tools.dnn_verifier.model_path`; scaler — в
+  `dnn_verifier.scaler_path`. Текущий `training_scaler.joblib` — реконструкция
+  (2026-07-17, см. `config/settings.local.yaml`), не сохранённый оригинал
   обучения; raw-выход EVO сравнивается с DT/TabPFN без отдельного калибратора.
 - DataLore reference: `notebooks/reference/Data_Twin_analytics.ipynb`; выполняемый код —
   локальный Python-модуль, а не облачный notebook.
@@ -116,7 +123,7 @@ OPU master или полный `dt_predictions.csv`. Финальный XLSX/HTM
   шаг 2a), не headless Python: скачиваются только папки недель, пересекающие окно
   `Date OPU..+cultivation_window_days` пациентов review-list текущего прогона, а не весь
   архив. В `data/miri_logs` больше не кладутся логи вручную.
-  - ПГТ-А: личный кабинет `https://pa.ivf.uz/orders` (нет API, вход на этом ПК
+- ПГТ-А: личный кабинет `https://pa.ivf.uz/orders` (нет API, вход на этом ПК
   автоматический), вкладка Pdg — заказы биопсии трофэктодермы, скачиваемый PDF
   (eMap Cycle Report, IMC Genomics/Vitrolife) в разделе Results со статусом
   `Provided`. Скачивание и сопоставление с ФИО — интерактивно из Claude Code
