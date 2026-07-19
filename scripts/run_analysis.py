@@ -105,7 +105,7 @@ _OPU_ALIASES = {
 }
 
 
-def _add_opu_aliases(frame: pd.DataFrame) -> pd.DataFrame:
+def _add_opu_aliases(frame: pd.DataFrame, clinic: str | None = None) -> pd.DataFrame:
     out = frame.copy()
     for canonical, alias in _OPU_ALIASES.items():
         if canonical in out.columns:
@@ -124,8 +124,18 @@ def _add_opu_aliases(frame: pd.DataFrame) -> pd.DataFrame:
     # itself is left untouched (real passport ID) for human-facing OPU output.
     if "patient_id" in out.columns and "date_opu" in out.columns:
         date_part = pd.to_datetime(out["date_opu"], errors="coerce").dt.strftime("%Y%m%d")
-        out["_key"] = (out["patient_id"].astype("string").str.strip().str.upper()
-                       + "#" + date_part.fillna("NA"))
+        key = (out["patient_id"].astype("string").str.strip().str.upper()
+               + "#" + date_part.fillna("NA"))
+        # Fertimed only: 1C carries the original fresh "Дата пункции" forward onto
+        # every subsequent cryo-transfer row for that retrieval, so a patient with
+        # several separate FET attempts from one OPU collides on ID+Date OPU alone
+        # (confirmed on the "6 месяцев 2026" export, owner decision 2026-07-19).
+        # Clinic A's key is left untouched to preserve cycle_uid continuity across
+        # runs (MIRI/lot history is keyed by it there; Fertimed has neither).
+        if clinic == "fertimed" and "date_et" in out.columns:
+            et_part = pd.to_datetime(out["date_et"], errors="coerce").dt.strftime("%Y%m%d")
+            key = key + "#" + et_part.fillna("NA")
+        out["_key"] = key
     elif "ID" in out.columns:
         out["_key"] = out["ID"]
     return out
@@ -184,7 +194,7 @@ def _prepare_opu(cfg: dict, input_path: Path, columns_cfg: dict, clinic: str | N
     configured = _project_path(cfg["paths"]["opu_table"])
     source = configured if configured.is_file() else input_path
     _, normalized, _ = _normalise_source(source, columns_cfg, cfg, clinic=clinic)
-    return _add_opu_aliases(normalized)
+    return _add_opu_aliases(normalized, clinic=clinic)
 
 
 def _read_dt(path: str | None, cfg: dict, model_input: Path) -> pd.DataFrame:
@@ -424,14 +434,14 @@ def main(argv: list[str] | None = None) -> int:
     # "_key" (ID+Date OPU) must exist before hashing cycle_uid: a repeat-attempt
     # patient shares one raw patient_id across cycles, so cycle_uid needs the
     # per-cycle composite, not the per-patient raw ID.
-    kpi_cycles = _add_opu_aliases(kpi_cycles)
+    kpi_cycles = _add_opu_aliases(kpi_cycles, clinic=args.clinic)
     kpi_cycles = privacy.add_cycle_uid(kpi_cycles, "_key", secret)
 
     # Wider lab-stage population (NOT gated by transferred>0/Preg known): feeds the
     # embryologist/doctor KPI competency tables and OZEMA, both of which must judge
     # lab performance regardless of whether a transfer happened (matches the owner's
     # Vienna-style dashboard and OZEMA sheet, which flag freeze-all/no-ET cycles too).
-    lab_cycles = _add_opu_aliases(normalized)
+    lab_cycles = _add_opu_aliases(normalized, clinic=args.clinic)
     lab_cycles = privacy.add_cycle_uid(lab_cycles, "_key", secret)
     ozema_cycles = ozema.build_ozema_table(lab_cycles, columns_cfg)
     ozema_candidates = ozema.genetic_counseling_candidates(ozema_cycles)
