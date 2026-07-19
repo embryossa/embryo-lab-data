@@ -4,6 +4,21 @@ description: End-to-end IVF laboratory run from inbox through external DT/TabPFN
 ---
 # Полный запуск анализа
 
+Несколько клиник в одном проекте (см. `docs/FERTIMED.md`): без аргументов —
+клиника A (поведение не меняется). `/run-analysis --fertimed` — прогон для
+Fertimed (`config/clinics/fertimed/`, `--clinic fertimed` под капотом
+`scripts/run_analysis.py`). У Fertimed нет MIRI/лотов расходников
+(`miri_logs.enabled: false`, `consumable_lots.enabled: false` в её конфиге) —
+шаги 2a/2b ниже относятся только к клинике A и для Fertimed пропускаются
+автоматически. ПГТ-А клиники Fertimed (`https://my.f-genetics.com/#/cases/orders`)
+уже автоматизирован (`pgt.enabled: true`, парсер `src/embryo/clinics/
+fertimed_pgt.py`, см. `docs/FERTIMED.md`) — новые отчёты для пациентов review-list
+∪ известного исхода без ещё скачанного файла в `pgt.reports_dir` нужно докачивать
+интерактивно через claude-in-chrome по аналогии с шагом 2b клиники A (портал и
+формат PDF другие, сама логика скачивания под Fertimed отдельно не описана здесь —
+см. `docs/FERTIMED.md`), затем перезапустить тем же `--dt-output/--tabpfn-output`
+replay.
+
 1. Из корня проекта выполни `python scripts/run_analysis.py $ARGUMENTS` (первый проход;
    если MIRI-логи для нужного окна ещё не синхронизированы локально, `miri_summary`
    просто отметит их отсутствием по этим `cycle_uid` — это не блокирует остальной пайплайн).

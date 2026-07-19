@@ -332,6 +332,28 @@ def competency_exclusion_mask(df: pd.DataFrame, columns_cfg: dict) -> pd.Series:
     return (open_cycle | no_retrieval | freeze_all).fillna(False)
 
 
+def funnel_exclusion_mask(df: pd.DataFrame, columns_cfg: dict) -> pd.Series:
+    """Rows whose funnel counts (2PN/Bl/cleavage/...) are not self-consistent
+    for THIS row and must never enter a KPI sum — e.g. cryo-transfer rows
+    whose fertilization-stage counts were carried over from the original
+    retrieval batch by the source MIS (one batch feeding several transfer
+    attempts), mismatched against a per-transfer blastocyst count (owner
+    confirmed 2026-07-18 for Fertimed: exclude ``treatment_type``="Криоперенос"
+    rows from KPI aggregation specifically for this reason).
+
+    Excludes only from KPI aggregation (cohort-level AND embryologist/doctor
+    competency tables) — never from the broader analysis cohort (DT/TabPFN/
+    review-list/OZEMA), which keep judging the actual transfer outcome.
+    Config-driven (``funnel_exclusion.stale_funnel_tokens`` matched against
+    ``treatment_type``); absent for a clinic without that column/config, this
+    is a no-op (e.g. clinic A).
+    """
+    cfg = columns_cfg.get("funnel_exclusion", {}) if columns_cfg else {}
+    treatment = df["treatment_type"] if "treatment_type" in df.columns else pd.Series(
+        pd.NA, index=df.index, dtype="string")
+    return _token_match(treatment, cfg.get("stale_funnel_tokens", [])).fillna(False)
+
+
 def surgical_sperm_mask(df: pd.DataFrame, columns_cfg: dict) -> pd.Series:
     """Rows using surgical sperm retrieval (TESE/SMF/...), excluded only from FR/FF."""
     cfg = columns_cfg.get("competency_exclusion", {}) if columns_cfg else {}

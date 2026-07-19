@@ -1,0 +1,83 @@
+# config/clinics/fertimed/columns.yaml — соответствия имён колонок для выгрузки МИС 1С
+# клиники Fertimed. Независим от config/columns.yaml (клиника A) — не расширяет и не
+# наследует его, чтобы правки под одну клинику не могли задеть другую.
+#
+# Резолвер (ingest.resolve_columns, общий для всех клиник) приводит вход к
+# каноническому имени по aliases. Бизнес-правила (парсинг возраста, фильтр
+# когорты, fallback-значения, приоритет эмбриолог/врач, кодирование исхода)
+# реализованы отдельно в src/embryo/clinics/fertimed.py — этот файл только
+# отвечает за то, "как называется колонка", не "что с ней делать".
+
+canonical:
+  # --- идентичность/административные ---
+  patient_id:     {aliases: ["Номер карты пациента"], required: true}
+  patient_name:   {aliases: ["ФИО"], required: false}
+  age:            {aliases: ["Возраст"], required: true}   # текст "34 года" — парсинг в fertimed.py
+  attempt_no:     {aliases: ["№ попытки"], required: true}  # пусто -> 1 (fertimed.py)
+  date_opu:       {aliases: ["Дата пункции"], required: false}
+  date_et:        {aliases: ["Дата переноса"], required: false}
+  treatment_type: {aliases: ["Лечение"], required: false}   # только для фильтра когорты, НЕ для метода оплодотворения
+
+  # --- флаги метода оплодотворения (надёжные, в отличие от "Лечение") ---
+  ivf_flag:       {aliases: ["IVF"], required: false}
+  icsi_flag:      {aliases: ["ICSI"], required: false}
+
+  # --- флаг похода за ответом ПГТ (иной портал/вендор, см. docs/FERTIMED.md) ---
+  pgt_et_flag:    {aliases: ["PGT-ET"], required: false}
+
+  # --- протокол стимуляции: только описательный контекст для итоговой
+  #     интерпретации, не участвует в фильтрации/расчётах (см. docs/FERTIMED.md) ---
+  stim_protocol_type:        {aliases: ["Тип протокола"], required: false}
+  stim_fsh_dose:             {aliases: ["Суммарная доза ФСГ"], required: false}
+  stim_trigger:              {aliases: ["Триггер"], required: false}
+  stim_protocol_start_day:   {aliases: ["Начало протокола, день мц"], required: false}
+  stim_stimulation_start_day: {aliases: ["Начало стимуляции, день мц"], required: false}
+  stim_duration_days:        {aliases: ["Длительность стимуляции"], required: false}
+
+  # --- ОКК/эмбриология ---
+  # КАФ сознательно не маппится: колонка содержит билинговые суммы, а не АФК
+  # (подтверждено анализом майской выгрузки, см. docs/FERTIMED.md). "afc"
+  # остаётся неизвестным полем -> impute_amh автоматически берёт fallback на
+  # follicles, это уже общая логика normalize.py.
+  follicles:      {aliases: ["Количество фолликулов"], required: true}   # пропуск -> occ (fertimed.py)
+  occ:            {aliases: ["Число ОКК"], required: true}
+  inseminated:    {aliases: ["Число инсеминированных"], required: true}  # пусто -> строка не для анализа
+  mii:            {aliases: ["Число MII"], required: false}
+  two_pn:         {aliases: ["2 pN"], required: true}
+  cleavage_d3:    {aliases: ["Число дробящихся на 3 день"], required: true}
+  embryos_d5:     {aliases: ["Число эмбрионов 5 дня"], required: false}
+  bl_total:       {aliases: ["Число Bl"], required: true}
+  bl_good:        {aliases: ["Число Bl хор.кач-ва"], required: true}
+
+  # --- перенос ---
+  transfer_outcome: {aliases: ["Исход переноса"], required: true}
+  transfer_day:     {aliases: ["День переноса"], required: true}   # пусто -> 5 (fertimed.py)
+  transferred:      {aliases: ["Перенесено эмбрионов"], required: true}
+  frozen:           {aliases: ["Заморожено эмбрионов"], required: true}
+  frozen_blastocysts: {aliases: ["Заморожено бластоцист"], required: false}  # суммируется с frozen (fertimed.py)
+
+  # --- три раздельные роли эмбриолога/врача (см. docs/FERTIMED.md за приоритетом) ---
+  embryologist_opu:  {aliases: ["Эмбриолог на пункции"], required: false}
+  embryologist_fert: {aliases: ["Эмбриолог, проводивший оплодотворение"], required: false}
+  embryologist_et:   {aliases: ["Эмбриолог на переносе"], required: false}
+  doctor_opu:        {aliases: ["Врач на пункции"], required: false}
+  doctor_et:         {aliases: ["Врач на переносе"], required: false}
+
+  amh:            {aliases: ["АМГ"], required: false}
+  bmi:            {aliases: ["ИМТ", "BMI"], required: false}
+
+# ФИО Сурмамы, Партнёр, Fresh/Vitrified OD (+коды доноров), ДС/ДЭ (+коды доноров),
+# SMF, FET, PGT-TVP, Донация, диагнозы, источник финансирования, КАФ, Двойной
+# перенос, Осложнения, Толщина эндометрия, Катетер, Внематочная/Плодные яйца/
+# Роды/Срок родов/Метод родоразрешения/Количество детей/Комментарий — намеренно
+# НЕ маппятся (владелец подтвердил: не используются в этом отчёте). Попадут в
+# unknown-предупреждение резолвера — это ожидаемо, не ошибка.
+
+# Владелец подтвердил (2026-07-18): в криоперенос-строках счётчики воронки
+# (2 pN и далее) отражают исходный протокол оплодотворения целиком, а не эту
+# конкретную попытку переноса — включение этих строк в Σ2PN/ΣBl искусственно
+# занижает BlR/TGBDR. Эти строки остаются в общем анализе (DT/TabPFN/
+# review-list/OZEMA не затронуты) — исключаются только из KPI-агрегации, см.
+# kpi.funnel_exclusion_mask.
+funnel_exclusion:
+  stale_funnel_tokens: ["Криоперенос"]  # значение treatment_type ("Лечение")

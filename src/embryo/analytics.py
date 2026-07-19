@@ -16,7 +16,7 @@ import pandas as pd
 
 from ._io import atomic_write_excel
 from .kpi import (DOCTOR_METRICS, EMBRYOLOGIST_METRICS, aggregate_kpi_slices, aggregate_kpis,
-                  compute_kpi, compute_rates, competency_exclusion_mask)
+                  compute_kpi, compute_rates, competency_exclusion_mask, funnel_exclusion_mask)
 
 try:
     from sklearn.metrics import brier_score_loss, roc_auc_score
@@ -258,6 +258,45 @@ _KPI_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+_TRUE_COUNT_CANONICALS = (
+    "age", "attempt_no", "follicles", "occ", "mii", "inseminated",
+    "two_pn", "three_pn", "degrade", "cleavage_d3", "embryos_d5",
+    "bl_total", "bl_good", "frozen", "transferred",
+)
+
+
+def _restore_true_counts(df_u: pd.DataFrame, lab_population: pd.DataFrame | None) -> pd.DataFrame:
+    """Digital Twin's own reconciled export can substitute a model-side
+    reconstruction for a raw count that was genuinely missing at input — e.g.
+    OCC and MII both unknown in our data, DT echoes back a matching non-null
+    pair in its own analytics-ready export (confirmed on Fertimed cycles: both
+    NaN pre-DT, identical non-null values post-DT). That substitution must
+    never be read back as an observed value for Vienna KPI or funnel-
+    conversion purposes (owner confirmed 2026-07-18).
+
+    Overwrites df_u's raw count columns with the true pre-DT values from
+    ``lab_population`` (the same source ``kpi_computed.csv`` is written from),
+    keyed by cycle_uid — a genuinely missing true value becomes NaN again,
+    not whatever DT reconstructed. Leaves DT's own prediction/med_* columns
+    untouched (conversion_rates' "predicted" side still reads those). No-op
+    if either frame lacks cycle_uid.
+    """
+    if (lab_population is None or lab_population.empty
+            or "cycle_uid" not in lab_population.columns
+            or "cycle_uid" not in df_u.columns):
+        return df_u
+    out = df_u.copy()
+    true_by_uid = lab_population.drop_duplicates("cycle_uid").set_index("cycle_uid")
+    for canonical, aliases in _KPI_ALIASES.items():
+        if canonical not in _TRUE_COUNT_CANONICALS or canonical not in true_by_uid.columns:
+            continue
+        true_values = pd.to_numeric(out["cycle_uid"].map(true_by_uid[canonical]), errors="coerce")
+        for alias in aliases:
+            if alias in out.columns:
+                out[alias] = true_values
+    return out
+
+
 def _canonical_kpi_frame(frame: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=frame.index)
     for canonical, aliases in _KPI_ALIASES.items():
@@ -270,6 +309,21 @@ def _canonical_kpi_frame(frame: pd.DataFrame) -> pd.DataFrame:
         if name in frame.columns:
             out[name] = frame[name]
     return out
+
+
+def _funnel_excluded_cycle_uids(lab_population: pd.DataFrame | None,
+                                columns_cfg: dict | None) -> set:
+    """cycle_uid set flagged by funnel_exclusion_mask (e.g. Fertimed cryo-transfer
+    rows whose 2PN/Bl counts were carried over from the original retrieval batch).
+    Computed from ``lab_population`` (has ``treatment_type``) so it can be reused
+    to filter ``df_u``-derived tables (funnel conversions, cohort KPI) that don't
+    carry that column themselves. Empty for a clinic without the relevant config
+    (e.g. clinic A) — a no-op there."""
+    if (lab_population is None or lab_population.empty or columns_cfg is None
+            or "cycle_uid" not in lab_population.columns):
+        return set()
+    mask = funnel_exclusion_mask(lab_population, columns_cfg)
+    return set(lab_population.loc[mask, "cycle_uid"]) if mask.any() else set()
 
 
 def _lab_kpi_slices(lab_population: pd.DataFrame, columns_cfg: dict) -> dict[str, pd.DataFrame]:
@@ -287,14 +341,24 @@ def _lab_kpi_slices(lab_population: pd.DataFrame, columns_cfg: dict) -> dict[str
     translation needed here; ``kpi.compute_rates``/``competency_exclusion_mask``
     read the columns.yaml names directly.
     """
-    excluded = competency_exclusion_mask(lab_population, columns_cfg)
+    # funnel_exclusion (e.g. Fertimed cryo-transfer rows whose 2PN/Bl counts were
+    # carried over from the original retrieval batch) affects only the
+    # embryologist metrics (FR/ClR/BlR/TGBDR/DegR/3pNR, all 2PN/Bl-stage).
+    # Doctor metrics (OCCR/MIIR) read occ/follicles/mii, which still reflect a
+    # real, single retrieval event by that doctor even on a cryo-transfer row —
+    # owner confirmed 2026-07-18 these must NOT be excluded for doctor KPI.
+    base_excluded = competency_exclusion_mask(lab_population, columns_cfg)
+    funnel_excluded = funnel_exclusion_mask(lab_population, columns_cfg)
     lab_rates = compute_rates(lab_population)
-    lab_eligible = lab_rates.loc[~excluded.reindex(lab_rates.index, fill_value=False)]
+    embryologist_eligible = lab_rates.loc[
+        ~(base_excluded | funnel_excluded).reindex(lab_rates.index, fill_value=False)]
+    doctor_eligible = lab_rates.loc[~base_excluded.reindex(lab_rates.index, fill_value=False)]
     out: dict[str, pd.DataFrame] = {}
-    if "embryologist" in lab_eligible.columns:
-        out["embryologist"] = aggregate_kpis(lab_eligible, "embryologist", metrics=EMBRYOLOGIST_METRICS)
-    if "doctor" in lab_eligible.columns:
-        out["doctor"] = aggregate_kpis(lab_eligible, "doctor", metrics=DOCTOR_METRICS)
+    if "embryologist" in embryologist_eligible.columns:
+        out["embryologist"] = aggregate_kpis(embryologist_eligible, "embryologist",
+                                             metrics=EMBRYOLOGIST_METRICS)
+    if "doctor" in doctor_eligible.columns:
+        out["doctor"] = aggregate_kpis(doctor_eligible, "doctor", metrics=DOCTOR_METRICS)
     return out
 
 
@@ -304,13 +368,37 @@ def _kpi_tables(df_u: pd.DataFrame, lab_population: pd.DataFrame | None = None,
     cycle = compute_kpi(canonical)
     if cycle.empty:
         return cycle, {"overall": pd.DataFrame()}
-    slices = aggregate_kpi_slices(
-        cycle,
+    # funnel_exclusion_mask needs "treatment_type", which df_u/canonical/cycle don't
+    # carry (OPU-enriched frame keeps only the fixed OPU-table contract) — computed
+    # instead from lab_population (same source rows, still has treatment_type) and
+    # applied here by cycle_uid. Doctor metrics (OCCR/MIIR) never exclude these
+    # rows (their occ/follicles/mii still reflect one real retrieval event); only
+    # embryologist metrics (2PN/Bl-stage) do (owner confirmed 2026-07-18) — each
+    # metric group computed from its own correctly-scoped cohort, then recombined.
+    excluded_uids = _funnel_excluded_cycle_uids(lab_population, columns_cfg)
+    kwargs = dict(
         time_col="date_opu" if "date_opu" in cycle else None,
         method_col="fert_method" if "fert_method" in cycle else None,
         embryologist_col="embryologist" if "embryologist" in cycle else None,
         doctor_col="doctor" if "doctor" in cycle else None,
     )
+    doctor_slices = aggregate_kpi_slices(cycle, **kwargs)
+    if excluded_uids and "cycle_uid" in cycle.columns:
+        embryologist_slices = aggregate_kpi_slices(
+            cycle.loc[~cycle["cycle_uid"].isin(excluded_uids)], **kwargs)
+        slices = {}
+        for key in set(doctor_slices) | set(embryologist_slices):
+            doc_df, emb_df = doctor_slices.get(key), embryologist_slices.get(key)
+            if doc_df is None or doc_df.empty or "metric" not in doc_df.columns:
+                slices[key] = emb_df if emb_df is not None else doc_df
+            elif emb_df is None or emb_df.empty:
+                slices[key] = doc_df
+            else:
+                doc_rows = doc_df[doc_df["metric"].isin(DOCTOR_METRICS)]
+                emb_rows = emb_df[~emb_df["metric"].isin(DOCTOR_METRICS)]
+                slices[key] = pd.concat([doc_rows, emb_rows], ignore_index=True)
+    else:
+        slices = doctor_slices
     if lab_population is not None and not lab_population.empty and columns_cfg is not None:
         slices.update(_lab_kpi_slices(lab_population, columns_cfg))
     return cycle, slices
@@ -341,11 +429,24 @@ def run_analytics(dt: pd.DataFrame, opu: pd.DataFrame,
     population (see ``_lab_kpi_slices``) instead of the transfer-gated cohort.
     """
     merged, df_u, _ = build_merged(dt, opu)
+    df_u = _restore_true_counts(df_u, lab_population)
     df_u = auto_interpret(df_u)  # deliberately after all joined CI fields exist
     df_preg = df_u.loc[_num(df_u["Preg"]).notna()].copy()
     summary = build_summary(df_u)
     calibration = calibration_metrics(df_preg)
+    # Same funnel-inconsistent (e.g. cryo-transfer) rows excluded from embryologist
+    # KPI (_kpi_tables) must also stay out of the MII→2PN/2PN→Bl/Bl→Good funnel
+    # steps — all sum the same 2PN/Bl-style counts. OCC→MII is doctor-scoped
+    # (mirrors MIIR) and never excludes these rows: occ/mii still reflect one
+    # real retrieval event by that doctor (owner confirmed 2026-07-18). Empty
+    # excluded set is a no-op (e.g. clinic A).
+    excluded_uids = _funnel_excluded_cycle_uids(lab_population, columns_cfg)
     conversions = conversion_rates(df_u)
+    if excluded_uids and "cycle_uid" in df_u.columns:
+        restricted = conversion_rates(df_u.loc[~df_u["cycle_uid"].isin(excluded_uids)])
+        doctor_step = conversions.loc[conversions["step"] == "OCC→MII"]
+        embryologist_steps = restricted.loc[restricted["step"] != "OCC→MII"]
+        conversions = pd.concat([doctor_step, embryologist_steps], ignore_index=True)
     review = _review_list(df_u)
     kpi_cycle, kpi_slices = _kpi_tables(df_u, lab_population, columns_cfg)
 

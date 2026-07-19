@@ -5,6 +5,7 @@ import pytest
 
 from embryo.analytics import auto_interpret, conversion_rates, run_analytics
 from embryo.kpi import (DOCTOR_METRICS, EMBRYOLOGIST_METRICS, aggregate_kpis, competency_exclusion_mask,
+                        funnel_exclusion_mask,
                         compute_kpi, compute_rates, surgical_sperm_mask)
 
 
@@ -147,3 +148,16 @@ def test_surgical_sperm_mask_matches_only_configured_tokens():
     frame = pd.DataFrame({"sperm_source": ["TESE", "SMF", "ejaculate", None]})
     mask = surgical_sperm_mask(frame, _EXCLUSION_CFG)
     assert mask.tolist() == [True, True, False, False]
+
+
+def test_funnel_exclusion_mask_flags_only_configured_treatment_tokens():
+    frame = pd.DataFrame({"treatment_type": ["Криоперенос", "ИКСИ", "криоперенос", None]})
+    cfg = {"funnel_exclusion": {"stale_funnel_tokens": ["Криоперенос"]}}
+    mask = funnel_exclusion_mask(frame, cfg)
+    assert mask.tolist() == [True, False, True, False]  # case-insensitive, exact token
+
+
+def test_funnel_exclusion_mask_is_noop_without_treatment_type_column():
+    frame = pd.DataFrame({"bl_total": [1, 2]})
+    cfg = {"funnel_exclusion": {"stale_funnel_tokens": ["Криоперенос"]}}
+    assert funnel_exclusion_mask(frame, cfg).tolist() == [False, False]

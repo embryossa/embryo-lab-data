@@ -27,6 +27,15 @@ from embryo import (analytics, consult, contracts, dnn_runner, dt_runner, incuba
                     kpi, lots, normalize, opu_table, ozema, pgt, privacy, reconcile, regression_qc,
                     report, tabpfn_regression_runner, tabpfn_runner)  # noqa: E402
 from embryo import _io  # noqa: E402
+from embryo.clinics import fertimed, fertimed_pgt  # noqa: E402
+
+# Клиники с собственным ingest/normalize-адаптером (см. src/embryo/clinics/).
+# Без --clinic (клиника A) поведение не меняется ни на йоту.
+_CLINIC_NORMALIZERS = {"fertimed": fertimed.prepare}
+# Клиники со своим ПГТ-А парсером (другой вендор/формат PDF, см.
+# src/embryo/clinics/fertimed_pgt.py). Без --clinic используется общий embryo.pgt
+# (eMap Cycle Report, клиника A) — поведение не меняется.
+_CLINIC_PGT_MODULES = {"fertimed": fertimed_pgt}
 
 
 def _merge(base: dict, override: dict) -> dict:
@@ -38,10 +47,10 @@ def _merge(base: dict, override: dict) -> dict:
     return base
 
 
-def _settings() -> dict:
-    with (ROOT / "config/settings.yaml").open(encoding="utf-8") as stream:
+def _settings(config_dir: Path) -> dict:
+    with (config_dir / "settings.yaml").open(encoding="utf-8") as stream:
         cfg = yaml.safe_load(stream)
-    local = ROOT / "config/settings.local.yaml"
+    local = config_dir / "settings.local.yaml"
     if local.exists():
         with local.open(encoding="utf-8") as stream:
             _merge(cfg, yaml.safe_load(stream))
@@ -63,6 +72,12 @@ def _input_path(cfg: dict, explicit: str | None) -> Path:
     candidates = []
     for pattern in ("*.xlsx", "*.xls", "*.csv"):
         candidates.extend(inbox.glob(pattern))
+    # "*_cleaned.xlsx" — фиксированный, документированный суффикс отдельного
+    # skill'а .claude/skills/reformat-1c-report (SKILL.md: "независимые
+    # процессы", основной пайплайн не должен его читать/автоопределять,
+    # даже если файл лежит в том же inbox_dir и оказался новее сырой выгрузки).
+    candidates = [p for p in candidates if not p.stem.endswith("_cleaned")
+                  and not p.name.startswith("~$")]
     if not candidates:
         raise FileNotFoundError(f"нет Excel/CSV в {inbox}")
     return max(candidates, key=lambda path: path.stat().st_mtime)
@@ -130,12 +145,16 @@ def _add_dt_aliases(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _normalise_source(path: Path, columns_cfg: dict, cfg: dict):
+def _normalise_source(path: Path, columns_cfg: dict, cfg: dict, clinic: str | None = None):
     raw = ingest.load_table(str(path))
-    resolved, unknown, missing = ingest.resolve_columns(raw, columns_cfg)
-    if missing:
-        raise ValueError(f"нет обязательных колонок: {missing}")
-    normalized = normalize.normalize(resolved, columns_cfg, cfg)
+    normalizer = _CLINIC_NORMALIZERS.get(clinic)
+    if normalizer:
+        normalized, unknown = normalizer(raw, columns_cfg, cfg)
+    else:
+        resolved, unknown, missing = ingest.resolve_columns(raw, columns_cfg)
+        if missing:
+            raise ValueError(f"нет обязательных колонок: {missing}")
+        normalized = normalize.normalize(resolved, columns_cfg, cfg)
     return raw, normalized, unknown
 
 
@@ -151,10 +170,10 @@ def _eligible_cycles(normalized: pd.DataFrame) -> pd.DataFrame:
     return computed
 
 
-def _prepare_opu(cfg: dict, input_path: Path, columns_cfg: dict) -> pd.DataFrame:
+def _prepare_opu(cfg: dict, input_path: Path, columns_cfg: dict, clinic: str | None = None) -> pd.DataFrame:
     configured = _project_path(cfg["paths"]["opu_table"])
     source = configured if configured.is_file() else input_path
-    _, normalized, _ = _normalise_source(source, columns_cfg, cfg)
+    _, normalized, _ = _normalise_source(source, columns_cfg, cfg, clinic=clinic)
     return _add_opu_aliases(normalized)
 
 
@@ -245,7 +264,10 @@ def _pgt_event_map(pgt_events: pd.DataFrame) -> dict:
     """
     if pgt_events.empty:
         return {}
-    keep_pgt = ["category", "karyotype", "cnv_qc_status", "overall_noise", "sdi", "sd_robust"]
+    keep_pgt = [c for c in
+                ["category", "karyotype", "cnv_qc_status", "overall_noise", "sdi", "sd_robust",
+                 "interpretation", "recommendation_category"]
+                if c in pgt_events.columns]
     event_map = {}
     for uid, group in pgt_events.groupby("cycle_uid"):
         records = group[keep_pgt].to_dict("records")
@@ -295,7 +317,11 @@ def _agent_packet(ares: dict, miri_summary: pd.DataFrame, miri_events: pd.DataFr
                     "euploid_rate", "qc_pass_rate", "mean_overall_noise_euploid",
                     "max_overall_noise_euploid", "mean_sdi_euploid", "max_sdi_euploid",
                     "mean_sd_robust_euploid", "max_sd_robust_euploid",
-                    "analysis_settings_variable", "pgt_note"]
+                    "analysis_settings_variable", "pgt_note",
+                    # Fertimed-only (f-genetics.com report has no CNV QC/analysis-settings
+                    # fields above, but does carry a transfer recommendation + case note).
+                    "n_tested", "n_not_tested", "n_recommended",
+                    "n_recommended_with_consent", "n_not_recommended", "case_note"]
         review = review.merge(pgt_summary[[c for c in pgt_cols if c in pgt_summary]],
                               on="cycle_uid", how="left", suffixes=("", "_pgt"))
     pgt_event_map = _pgt_event_map(pgt_events)
@@ -316,6 +342,8 @@ def _agent_packet(ares: dict, miri_summary: pd.DataFrame, miri_events: pd.DataFr
         "qc_pass_rate", "mean_overall_noise_euploid", "max_overall_noise_euploid",
         "mean_sdi_euploid", "max_sdi_euploid", "mean_sd_robust_euploid",
         "max_sd_robust_euploid", "analysis_settings_variable", "pgt_embryos", "pgt_note",
+        "n_tested", "n_not_tested", "n_recommended", "n_recommended_with_consent",
+        "n_not_recommended", "case_note",
     ]
     safe = privacy.deidentify_records(review, allowed)
     # Privacy-safe counts only: OZEMA's own per-cycle table carries raw patient_id/
@@ -359,11 +387,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-miri", action="store_true")
     parser.add_argument("--skip-lots", action="store_true")
     parser.add_argument("--skip-pgt", action="store_true")
+    parser.add_argument("--clinic",
+                        help="config/clinics/<name> вместо config/ (клиника A по умолчанию, "
+                             "поведение без флага не меняется)")
+    parser.add_argument("--fertimed", action="store_true",
+                        help="ярлык для --clinic fertimed")
     args = parser.parse_args(argv)
+    if args.fertimed and not args.clinic:
+        args.clinic = "fertimed"
 
     os.chdir(ROOT)
-    cfg = _settings()
-    columns_cfg = ingest.load_config(str(ROOT / "config/columns.yaml"))
+    config_dir = ROOT / "config" if not args.clinic else ROOT / "config" / "clinics" / args.clinic
+    cfg = _settings(config_dir)
+    columns_cfg = ingest.load_config(str(config_dir / "columns.yaml"))
     input_path = _input_path(cfg, args.input)
     processed = _project_path(cfg["paths"]["processed_dir"])
     private = _project_path(cfg["paths"]["local_private_dir"])
@@ -372,7 +408,7 @@ def main(argv: list[str] | None = None) -> int:
         directory.mkdir(parents=True, exist_ok=True)
     print(f"[input] {input_path}")
 
-    _, normalized, unknown = _normalise_source(input_path, columns_cfg, cfg)
+    _, normalized, unknown = _normalise_source(input_path, columns_cfg, cfg, clinic=args.clinic)
     kpi_cycles = _eligible_cycles(normalized)
     secret = privacy.load_or_create_secret(_project_path(cfg["privacy"]["secret_file"]))
     # "_key" (ID+Date OPU) must exist before hashing cycle_uid: a repeat-attempt
@@ -392,7 +428,20 @@ def main(argv: list[str] | None = None) -> int:
     _io.atomic_write_csv(ozema_cycles, processed / "ozema_cycles.csv")
     _io.atomic_write_csv(ozema_candidates, processed / "ozema_genetic_counseling_candidates.csv")
 
-    model_input = _add_dt_aliases(kpi_cycles)
+    # Клиника B (и любая другая с quirks.mii_model_fallback_column): вход DT/TabPFN
+    # получает MII=Число инсеминированных для ЭКО-циклов без известного MII (чтобы
+    # нейросети не теряли эти циклы), но только для model_input — kpi_computed.csv/
+    # OPU_table_enriched.xlsx и лабораторный MIIR продолжают использовать настоящий
+    # "mii" (df kpi_cycles не трогается). См. src/embryo/clinics/fertimed.py.
+    model_source = kpi_cycles
+    mii_fallback_col = cfg.get("quirks", {}).get("mii_model_fallback_column")
+    if mii_fallback_col and mii_fallback_col in kpi_cycles.columns:
+        model_source = kpi_cycles.copy()
+        fallback = model_source[mii_fallback_col]
+        model_source["mii"] = model_source["mii"].where(model_source["mii"].notna(), fallback)
+        if "MII" in model_source.columns:
+            model_source["MII"] = model_source["MII"].where(model_source["MII"].notna(), fallback)
+    model_input = _add_dt_aliases(model_source)
     model_input_path = private / "model_input.xlsx"
     _io.atomic_write_excel({"model_input": model_input}, model_input_path)
     _io.atomic_write_csv(kpi_cycles, processed / "kpi_computed.csv")
@@ -400,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
                                      ensure_ascii=False, indent=2),
                           packets / "schema_diagnostic.json")
 
-    opu = _prepare_opu(cfg, input_path, columns_cfg)
+    opu = _prepare_opu(cfg, input_path, columns_cfg, clinic=args.clinic)
     dt = _read_dt(args.dt_output, cfg, model_input_path)
     if "_key" in dt.columns:
         # DT's own "ready" export accumulates every patient it has ever processed
@@ -480,7 +529,8 @@ def main(argv: list[str] | None = None) -> int:
         "max_event_duration_minutes", "error",
     ])
     miri_events = pd.DataFrame(columns=incubator.EVENT_COLUMNS)
-    if not args.skip_miri and not review_patients.empty:
+    miri_enabled = cfg.get("miri_logs", {}).get("enabled", True)
+    if not args.skip_miri and miri_enabled and not review_patients.empty:
         mcfg = cfg["miri_logs"]
         miri_summary = incubator.analyze_patients(
             review_patients, str(_project_path(mcfg["base_dir"])), mcfg["incubator"],
@@ -517,7 +567,8 @@ def main(argv: list[str] | None = None) -> int:
         "mean_sdi_euploid", "max_sdi_euploid", "mean_sd_robust_euploid",
         "max_sd_robust_euploid", "mean_overall_noise_all", "max_overall_noise_all", "pgt_note",
     ])
-    pgt_events = pd.DataFrame(columns=pgt.EMBRYO_COLUMNS)
+    pgt_module = _CLINIC_PGT_MODULES.get(args.clinic, pgt)
+    pgt_events = pd.DataFrame(columns=pgt_module.EMBRYO_COLUMNS)
     pcfg = cfg.get("pgt", {})
     if not args.skip_pgt and pcfg.get("enabled") and not kpi_cycles.empty:
         reports_dir = _project_path(pcfg.get("reports_dir", "data/processed/local_private/pgt_reports"))
@@ -529,8 +580,8 @@ def main(argv: list[str] | None = None) -> int:
         worklist = pd.concat(worklist_parts, ignore_index=True).drop_duplicates(subset="cycle_uid")
         if reports_dir.is_dir():
             try:
-                pgt_summary = pgt.analyze_reports(worklist, reports_dir,
-                                                  date_col_opu="Date OPU", date_col_et="Date ET")
+                pgt_summary = pgt_module.analyze_reports(worklist, reports_dir,
+                                                          date_col_opu="Date OPU", date_col_et="Date ET")
                 pgt_events = pgt_summary.attrs.get("events", pgt_events)
                 unmatched = pgt_summary.attrs.get("unmatched", [])
                 if unmatched:

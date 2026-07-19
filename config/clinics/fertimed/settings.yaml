@@ -1,0 +1,140 @@
+# config/clinics/fertimed/settings.yaml — параметры прогона для клиники Fertimed.
+# Зеркалит структуру config/settings.yaml (клиника A), но это НЕЗАВИСИМЫЙ файл —
+# правки здесь не влияют на клинику A и наоборот. Машинно-зависимые/секретные
+# значения (Airtable/PGT токены) — только в
+# config/clinics/fertimed/settings.local.yaml (в .gitignore), см. .example.
+#
+# Обоснование каждого пункта ниже — docs/FERTIMED.md.
+
+paths:
+  inbox_dir: "data/inbox/fertimed"
+  miri_logs_dir: "data/miri_logs/fertimed"      # не используется (miri_logs.enabled=false), оставлено для симметрии
+  processed_dir: "data/processed/fertimed"
+  agent_packets_dir: "data/processed/fertimed/agent_packets"
+  local_private_dir: "data/processed/fertimed/local_private"
+  sample_dir: "data/sample/fertimed"
+  opu_table: "data/inbox/fertimed/OPU_table.xlsx"  # обычно не существует -> используется автоопределённый inbox-файл
+
+external_tools:
+  # Тот же внешний проект IVF Digital Twin, что и у клиники A — фильтрация по
+  # "_key" (Номер карты пациента + Дата пункции) в run_analysis.py уже
+  # изолирует строки текущего прогона от накопленной истории инструмента.
+  digital_twin:
+    launch: true
+    mode: batch
+    project_dir: "C:/Users/User/Desktop/IVF/AI/IVF Digital Twin Pro/IVF Digital Twin"
+    # ".\" префикс: на этом ПК включена политика Windows
+    # (NoDefaultCurrentDirectoryInPath), голое имя батника через cmd.exe не резолвится
+    # (тот же фикс, что в settings.local.yaml клиники A).
+    run_cmd: '.\RUN_BATCH.bat {input}'
+    input_target: ""
+    results_dir: "C:/Users/User/Desktop/IVF/AI/IVF Digital Twin Pro/IVF Digital Twin/results"
+  tabpfn:
+    launch: true
+    mode: batch
+    project_dir: "C:/Users/User/Desktop/IVF/AI/TABPFN"
+    run_cmd: '.\run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
+    results_dir: "C:/Users/User/Desktop/IVF/AI/TABPFN/tabpfn_logs"
+    predictions_glob: "tabpfn_predictions*.csv"
+    output: "data/processed/fertimed/tabpfn_predictions.csv"   # отдельный файл от клиники A
+  # Владелец подтвердил (2026-07-18): та же DNN и то же окружение, что у
+  # клиники A — не отдельная модель, как предполагалось изначально.
+  dnn_verifier:
+    enabled: true
+    project_dir: "C:/Users/User/PycharmProjects/pythonProject"
+    model_path: "C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/my_best_model"
+    run_cmd: '"C:/Users/User/Desktop/IVF/AI/venv/Scripts/python.exe" "C:/Users/User/Desktop/IVF/AI/embryo-lab-data/external/dnn/Evo_calculations.py" --input {input} --model {model} --scaler {scaler} --output {output}'
+    output: "data/processed/fertimed/evo_predictions.csv"
+    scaler_path: "C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/training_scaler.joblib"
+  # Владелец подтвердил (2026-07-18): тот же TabPFN-3 regression, что у клиники A.
+  tabpfn_regression:
+    enabled: true
+    project_dir: "C:/Users/User/PycharmProjects/pythonProject/tabpfn"
+    run_cmd: '"C:/Users/User/PycharmProjects/pythonProject/tabpfn/.venv/Scripts/python.exe" tabpfn3_ivf_regression_report_CPU_16K.py --opu-path {input} --output-csv {output}'
+    output: "data/processed/fertimed/local_private/tabpfn_regression_full.csv"
+
+thresholds:
+  tabpfn_ci_width_pp: 20
+  cultivation_window_days: 6   # не используется (MIRI/лоты выключены), оставлено для симметрии контрактов
+
+privacy:
+  # Отдельные секрет/crosswalk от клиники A: cycle_uid и обратный джойн не
+  # должны пересекаться между клиниками ни технически, ни по содержимому.
+  secret_file: "data/processed/fertimed/local_private/cycle_uid.key"
+  crosswalk_file: "data/processed/fertimed/local_private/cycle_uid_crosswalk.csv"
+
+# Формула унаследована от клиники A как отправная точка (age+AFC+OCC); Fertimed
+# не заявляла свою — см. docs/FERTIMED.md. Пересмотреть отдельно, если понадобится.
+amh_impute:
+  a_afc: 0.16
+  b_occ: 0.05
+  c_age: 0.08
+  intercept: 0.5
+  floor: 0.1
+  ceil: 12.0
+
+bmi_impute:
+  constant: 24.0
+
+join:
+  dt_key: "_key"
+  opu_key: "patient_id"
+  tabpfn_key: "patient_id"
+
+miri_logs:
+  enabled: false   # у Fertimed нет логов инкубатора — гейт в run_analysis.py пропускает шаг целиком
+
+consumable_lots:
+  enabled: false   # у Fertimed нет выгрузки лотов расходников (Airtable)
+  airtable:
+    base_id: ""
+    items_table_id: ""
+    changes_table_id: ""
+    token: ""
+
+pgt:
+  # Личный кабинет генетической лаборатории Fertimed подтверждён владельцем
+  # (2026-07-18): https://my.f-genetics.com/#/cases/orders — другой вендор,
+  # PDF-отчёт менее подробный, чем eMap Cycle Report клиники A (нет CNV QC
+  # noise/analysis settings — только euploid/aneuploid/mosaic + рекомендация
+  # по переносу). Парсер: src/embryo/clinics/fertimed_pgt.py (см.
+  # docs/FERTIMED.md), диспетчеризация по --clinic в scripts/run_analysis.py
+  # (_CLINIC_PGT_MODULES). Отчёты скачиваются интерактивно (claude-in-chrome,
+  # см. .claude/skills/run-analysis/SKILL.md шаг 2b) в reports_dir ниже.
+  enabled: true
+  portal_url: "https://my.f-genetics.com/#/cases/orders"
+  reports_dir: "data/processed/fertimed/local_private/pgt_reports"
+
+analytics:
+  datalore_notebook_reference: "notebooks/reference/Data_Twin_analytics.ipynb"
+  primary_prob_col: ["DIGITAL TWIN", "bayes_mean", "p_per_transfer"]
+
+# Подмена канонического "mii" значением из mii_ml_fallback ТОЛЬКО при
+# построении входа для DT/TabPFN (scripts/run_analysis.py) — лабораторный
+# KPI считается по настоящему mii и это не затрагивает. См.
+# src/embryo/clinics/fertimed.py:MII_ML_FALLBACK_COLUMN.
+quirks:
+  mii_model_fallback_column: "mii_ml_fallback"
+
+# Тот же контракт признаков DT, что и у клиники A — все поля выводимы из
+# канонической формы Fertimed тоже. Подтвердить отдельно, когда/если для
+# Fertimed будет обучена собственная версия ансамбля DT.
+selected_features:
+  - "Возраст"
+  - "№ попытки"
+  - "Количество фолликулов"
+  - "Число ОКК"
+  - "Число инсеминированных"
+  - "2 pN"
+  - "Число дробящихся на 3 день"
+  - "Число Bl"
+  - "Число Bl хор.кач-ва"
+  - "Частота оплодотворения"
+  - "Частота дробления"
+  - "Частота формирования бластоцист"
+  - "Частота формирования бластоцист хорошего качества"
+  - "Частота получения ОКК"
+  - "Число эмбрионов 5 дня"
+  - "Заморожено эмбрионов"
+  - "Перенесено эмбрионов"
+  - "KPIScore"

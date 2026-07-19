@@ -1,0 +1,11 @@
+# Скопируйте в config/clinics/fertimed/settings.local.yaml (в .gitignore).
+# DT/TabPFN/DNN/TabPFN-3 regression уже настроены с реальными путями прямо в
+# config/clinics/fertimed/settings.yaml (та же среда, что у клиники A,
+# владелец подтвердил 2026-07-18) — здесь обычно нечего переопределять, кроме
+# следующего, когда будет готово:
+
+pgt:
+  enabled: true   # включить, когда парсер под my.f-genetics.com будет готов (см. docs/FERTIMED.md)
+
+consumable_lots:
+  enabled: false   # у Fertimed нет выгрузки лотов расходников — оставить выключенным

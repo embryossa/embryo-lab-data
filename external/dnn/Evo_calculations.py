@@ -106,15 +106,29 @@ def prepare_features(input_path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         raise ValueError(f"[dnn] отсутствуют признаки обучения: {missing}")
     for c in feat:
         df[c] = pd.to_numeric(df[c], errors="coerce")
+    # Owner-directed (2026-07-18, Fertimed source data): this MIS never writes an
+    # explicit 0 for "Заморожено эмбрионов" — blank means nothing was frozen, not
+    # unknown. Only for this optional cross-check's feature input (mirrors the
+    # "№ попытки" fillna above); the main pipeline's frozen/analytics field keeps
+    # NaN as a true missing value.
+    if "Заморожено эмбрионов" in df.columns:
+        df["Заморожено эмбрионов"] = df["Заморожено эмбрионов"].fillna(0)
     df["KPIScore"] = df.apply(_kpi_score, axis=1)
     X = df[SELECTED].copy()
     bad = X.isna()
-    if bad.any().any():
+    bad_rows = bad.any(axis=1)
+    if bad_rows.any():
+        # Пропуск строки, а не всего батча: ноль по-прежнему не используется как замена
+        # пропуска (та же гарантия), но одна незаполненная строка больше не должна
+        # блокировать проверку остальных. Отброшенные строки идентифицируются по
+        # id_col ниже; здесь — по индексу и признаку, для диагностики в логе.
         details = {c: bad.index[bad[c]].tolist()[:10] for c in X.columns if bad[c].any()}
-        raise ValueError(
-            "[dnn] пропуски в признаках; ноль не используется как замена пропуска: "
-            f"{details}"
-        )
+        print(f"[dnn] пропуск {int(bad_rows.sum())}/{len(df)} строк с пропусками в признаках "
+              f"(ноль не используется как замена пропуска): {details}", file=sys.stderr)
+        df = df.loc[~bad_rows].reset_index(drop=True)
+        X = X.loc[~bad_rows].reset_index(drop=True)
+    if df.empty:
+        raise ValueError("[dnn] ни одной строки с полным набором признаков — проверка невозможна")
     if not np.isfinite(X.to_numpy(dtype=float)).all():
         raise ValueError("[dnn] признаки содержат бесконечные значения")
     return df, X
