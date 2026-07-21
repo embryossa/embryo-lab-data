@@ -1,0 +1,62 @@
+# config/columns.yaml — единственный источник соответствий имён колонок.
+# Резолвер (ingest.py) приводит вход к КАНОНИЧЕСКОМУ имени по aliases.
+# Неизвестная колонка -> предупреждение, не молчаливое угадывание.
+
+canonical:
+  age:            {aliases: ["Возраст", "Age", "age"], required: true}
+  attempt_no:     {aliases: ["№ попытки", "# Attempt", "Attempt", "attempt", "attempt_number"], required: true}
+  follicles:      {aliases: ["Количество фолликулов", "N folicules OPU", "follicles"], required: true}
+  afc:            {aliases: ["Antral follicule count", "AFC", "afc"], required: false}  # ≠ follicles: базовый АФК, для импутации AMH
+  occ:            {aliases: ["Число ОКК", "OCC", "Oocytes N", "okk", "known_okk"], required: true}
+  inseminated:    {aliases: ["Число инсеминированных", "Inseminated"], required: true}
+  two_pn:         {aliases: ["2 pN", "2pN", "2PN", "pn2", "known_pn2"], required: true}
+  cleavage_d3:    {aliases: ["Число дробящихся на 3 день", "Cleavage", "real_cleav"], required: true}
+  # ВАЖНО: embryos_d5 (общее число эмбрионов на D5) и bl_total (именно бластоцисты) — РАЗНЫЕ величины.
+  embryos_d5:     {aliases: ["Число эмбрионов 5 дня", "D5 embryos"], required: false}
+  bl_total:       {aliases: ["Число Bl", "Bl", "D5-D6-D7", "blasts", "known_blasts", "real_bl"], required: true}
+  bl_good:        {aliases: ["Число Bl хор.кач-ва", "Good Bl", "Good quality BL", "good", "known_good", "real_goodbl"], required: true}
+  transfer_outcome: {aliases: ["Исход переноса", "Preg", "Pregnancy", "Outcome", "real_outcome"], required: true}
+  transfer_day:   {aliases: ["День переноса", "Day of ET"], required: true}
+  transferred:    {aliases: ["Перенесено эмбрионов", "ET", "Embryos transferred"], required: true}
+  frozen:         {aliases: ["Заморожено эмбрионов", "Cryo", "real_cryo"], required: true}
+  mii:            {aliases: ["MII", "mii", "known_mii"], required: false}
+  three_pn:       {aliases: ["3pN or more", "3pN", "3 pN"], required: false}
+  degrade:        {aliases: ["Degrade", "Deg"], required: false}
+  amh:            {aliases: ["AMH", "АМГ", "amh"], required: false}
+  bmi:            {aliases: ["BMI", "ИМТ", "bmi"], required: false}
+  patient_id:     {aliases: ["ID", "patient_id", "_key", "record_id"], required: true}
+  patient_name:   {aliases: ["Patient Full Name", "ФИО", "ФИО пациента", "patient_name"], required: false}
+  date_opu:       {aliases: ["Date OPU", "Дата ОПУ", "Дата пункции", "date_opu"], required: false}
+  date_et:        {aliases: ["Date ET", "Дата ET", "Дата переноса", "date_et"], required: false}
+  fertilization_method: {aliases: ["IVF/ICSI", "Метод", "fertilization_method"], required: false}
+  embryologist:  {aliases: ["Embryologist", "Эмбриолог", "embryologist"], required: false}
+  doctor:         {aliases: ["Doctor", "Врач", "doctor"], required: false}
+  sperm_source:   {aliases: ["sperm", "Sperm", "sperm_source"], required: false}  # TESE/SMF/MESA/PESA признак хирургического забора спермы
+
+# Распознавание исхода переноса. Preg=1, если: клиническая беременность ЛИБО
+# любое утвердительное "да"/"yes". Всё прочее заполненное -> 0. Пусто -> NaN.
+outcome:
+  affirmative_exact: ["да", "yes", "y", "+", "да ", "yes "]     # -> 1
+  negative_exact:    ["нет", "no", "n", "-", "неизвестно"]      # -> 0
+  positive_substrings:                                          # -> 1
+    - "клиническая беременность"
+    - "беременность клиническая"
+    - "беременность +28"
+    - "clinical pregnancy"
+    - "беременность наступила"
+  negative_substrings:                                          # -> 0 (проверяются ПЕРЕД positive)
+    - "не наступила"
+    - "биохимическая"
+    - "внематочная"
+    - "замершая"
+    - "no pregnancy"
+  numeric_positive: [1]
+  numeric_negative: [0]
+
+# Исключения для таблиц KPI эмбриолог/врач (competency dashboard) — НЕ применяются к
+# основной когорте/review-list/OZEMA (см. docs/CONTRACTS.md). Значения сравниваются
+# без учёта регистра после strip().
+competency_exclusion:
+  no_retrieval_tokens: ["NO", "нет", "no retrieval"]        # fertilization_method (IVF/ICSI)
+  freeze_all_tokens: ["Cryo", "крио", "freeze-all", "freeze all"]  # fertilization_method (IVF/ICSI)
+  surgical_sperm_tokens: ["TESE", "SMF", "MESA", "PESA"]     # sperm_source; только для FR/FF-этапа

@@ -1,0 +1,117 @@
+# config/clinics/benchmark/settings.yaml — изолированный прогон для сравнения
+# предсказаний Digital Twin/TabPFN/TabPFN-3 regression на тестовом датасете из
+# открытых источников (подготовлен владельцем в формате OPU table, тот же
+# канонический английский набор колонок, что у клиники A — см.
+# config/clinics/benchmark/columns.yaml, копия config/columns.yaml).
+#
+# Отдельная clinic-папка создана НЕ из-за формата данных (он идентичен клинике A),
+# а чтобы синтетический бенчмарк не писал в data/processed/* клиники A и не
+# попадал в её run_history.jsonl/review_list/DT_Analytics_Report. MIRI/лоты/ПГТ-А
+# выключены — эти внешние системы (Google Drive, Airtable, pa.ivf.uz) относятся
+# только к реальным пациентам клиники A. DNN verifier тоже выключен: владелец
+# запросил только Digital Twin + TabPFN + TabPFN-3 regression для этого сравнения.
+
+paths:
+  inbox_dir: "data/inbox/benchmark"
+  miri_logs_dir: "data/miri_logs/benchmark"      # не используется (miri_logs.enabled=false)
+  processed_dir: "data/processed/benchmark"
+  agent_packets_dir: "data/processed/benchmark/agent_packets"
+  local_private_dir: "data/processed/benchmark/local_private"
+  sample_dir: "data/sample/benchmark"
+  opu_table: "data/inbox/benchmark/OPU_table.xlsx"  # обычно не существует -> автоопределённый inbox-файл
+
+external_tools:
+  # Тот же внешний проект/окружение DT/TabPFN/TabPFN-3, что у клиники A —
+  # абсолютные машинно-зависимые пути живут в config/machine.local.yaml (общий
+  # для всех клиник, подмешивается независимо от --clinic).
+  digital_twin:
+    launch: true
+    mode: batch
+    project_dir: ""
+    run_cmd: 'RUN_BATCH.bat {input}'
+    input_target: ""
+    results_dir: ""
+  tabpfn:
+    launch: true
+    mode: batch
+    project_dir: ""
+    run_cmd: 'run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
+    results_dir: ""
+    predictions_glob: "tabpfn_predictions*.csv"
+    output: "data/processed/benchmark/tabpfn_predictions.csv"
+  dnn_verifier:
+    enabled: false   # владелец не запрашивал DNN-кросс-проверку для этого сравнения
+    project_dir: ""
+    model_path: ""
+    run_cmd: ""
+    output: "data/processed/benchmark/evo_predictions.csv"
+    scaler_path: ""
+  tabpfn_regression:
+    enabled: true    # мягкий сбой: при ошибке шаг пропускается, остальной прогон продолжается
+    project_dir: ""
+    run_cmd: ""
+    output: "data/processed/benchmark/local_private/tabpfn_regression_full.csv"
+
+thresholds:
+  tabpfn_ci_width_pp: 20
+  cultivation_window_days: 6   # не используется (MIRI/лоты выключены), оставлено для симметрии контрактов
+
+privacy:
+  secret_file: "data/processed/benchmark/local_private/cycle_uid.key"
+  crosswalk_file: "data/processed/benchmark/local_private/cycle_uid_crosswalk.csv"
+
+amh_impute:
+  a_afc: 0.16
+  b_occ: 0.05
+  c_age: 0.08
+  intercept: 0.5
+  floor: 0.1
+  ceil: 12.0
+
+bmi_impute:
+  constant: 24.0
+
+join:
+  dt_key: "_key"
+  opu_key: "ID"
+  tabpfn_key: "patient_id"
+
+miri_logs:
+  enabled: false   # синтетический датасет не привязан к реальным логам инкубатора 6391
+
+consumable_lots:
+  enabled: false   # синтетический датасет не привязан к реальной выгрузке лотов Airtable
+  airtable:
+    base_id: ""
+    items_table_id: ""
+    changes_table_id: ""
+    token: ""
+
+pgt:
+  enabled: false   # синтетические пациенты не существуют в личном кабинете pa.ivf.uz
+  portal_url: "https://pa.ivf.uz/orders"
+  reports_dir: "data/processed/benchmark/local_private/pgt_reports"
+
+analytics:
+  datalore_notebook_reference: "notebooks/reference/Data_Twin_analytics.ipynb"
+  primary_prob_col: ["DIGITAL TWIN", "bayes_mean", "p_per_transfer"]
+
+selected_features:              # тот же контракт признаков DT, что и у клиники A
+  - "Возраст"
+  - "№ попытки"
+  - "Количество фолликулов"
+  - "Число ОКК"
+  - "Число инсеминированных"
+  - "2 pN"
+  - "Число дробящихся на 3 день"
+  - "Число Bl"
+  - "Число Bl хор.кач-ва"
+  - "Частота оплодотворения"
+  - "Частота дробления"
+  - "Частота формирования бластоцист"
+  - "Частота формирования бластоцист хорошего качества"
+  - "Частота получения ОКК"
+  - "Число эмбрионов 5 дня"
+  - "Заморожено эмбрионов"
+  - "Перенесено эмбрионов"
+  - "KPIScore"

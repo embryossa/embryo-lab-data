@@ -1,0 +1,4 @@
+Стадия,MAE_const,MAE_DT,MAE_DT_recal,MAE_TabPFN,MAE_TabPFN_recal,beats_const
+2PN zygotes,3.348,1.249,1.26,1.291,1.3,yes
+Blastocysts,1.883,2.05,1.369,1.834,1.774,yes
+Good-quality blastocysts,0.256,2.718,0.37,0.833,0.281,NO

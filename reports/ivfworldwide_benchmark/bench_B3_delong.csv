@@ -1,0 +1,4 @@
+Contrast,AUC_A,AUC_TabPFN,dAUC,z,p,sig
+Digital Twin (ensemble) vs TabPFN,0.607,0.596,0.011,0.38,0.701,ns
+CSDI component vs TabPFN,0.569,0.596,-0.027,-0.78,0.437,ns
+Bayesian ensemble vs TabPFN,0.628,0.596,0.031,1.16,0.245,ns

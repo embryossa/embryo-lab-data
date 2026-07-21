@@ -1,0 +1,6 @@
+Стадия,n,Модель,Coverage,CI,Dev,Width
+2PN zygotes,489,TabPFN-3 P10-P90 (nom 80%),81.8,[78.1;85.1],1.8,3.8
+Blastocysts,489,TabPFN-3 P10-P90 (nom 80%),69.3,[65.0;73.4],-10.7,4.04
+Good-quality blastocysts,489,TabPFN-3 P10-P90 (nom 80%),82.8,[79.2;86.1],2.8,1.67
+Vitrified embryos,489,TabPFN-3 P10-P90 (nom 80%),98.4,[96.8;99.3],18.4,1.48
+MII (leaked in DT),489,TabPFN-3 P10-P90 (nom 80%),78.5,[74.6;82.1],-1.5,5.08
