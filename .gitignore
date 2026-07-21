@@ -16,6 +16,12 @@ config/machine.local.yaml
 config/settings.local.yaml
 config/clinics/*/settings.local.yaml
 
+# Teable API-токены (облако + self-hosted):
+teable/teable_config*.json
+teable/self-hosted/.env
+teable/sync_log.txt
+teable/sync_done.flag
+
 # Python / окружение
 venv/
 .venv/
