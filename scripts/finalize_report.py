@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import argparse
-from html import escape
 from pathlib import Path
 import sys
+
+import markdown
 
 if sys.platform == "win32":
     # Detached/piped stdout on Windows falls back to the ANSI locale codepage
@@ -28,8 +29,16 @@ def main() -> None:
     start, end = "<!-- LEAD_START -->", "<!-- LEAD_END -->"
     if start not in html or end not in html:
         raise ValueError("HTML report has no lead-analysis insertion contract")
+    # markdown.markdown() renders headers/bold/lists to real HTML tags (the
+    # previous html.escape() left literal "##"/"**" on the page) and, since it
+    # doesn't re-escape the source, correctly renders any HTML entity the
+    # agent's own markdown already contains (e.g. "&gt;") instead of turning
+    # it into a visible "&amp;gt;". The agent text is Opus's own synthesis,
+    # not external/user input, so passing it through without a sanitizer is
+    # the same trust boundary this insertion already assumed.
+    rendered = markdown.markdown(text, extensions=["extra", "sane_lists"])
     replacement = (start + "<div class='narrative' id='lead-analysis'>" +
-                   escape(text) + "</div>" + end)
+                   rendered + "</div>" + end)
     before, rest = html.split(start, 1)
     _, after = rest.split(end, 1)
     atomic_write_text(before + replacement + after, report)

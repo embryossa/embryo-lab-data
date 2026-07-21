@@ -410,7 +410,7 @@ def _review_list(df_u: pd.DataFrame) -> pd.DataFrame:
     wanted = [
         "cycle_uid", "patient_name", "Patient Full Name", "patient_id", "ID", "age", "Age",
         "priority", "reason", "PRAI", "PRAI CI (TabPFN), %", "ci_low", "ci_high",
-        "ci_width_pp", "ci_wide", "DIGITAL TWIN", "Preg", "Date OPU", "Date ET",
+        "ci_width_pp", "ci_wide", "DIGITAL TWIN", "DNN", "Preg", "Date OPU", "Date ET",
     ]
     columns = [name for name in wanted if name in df_u.columns]
     review = df_u.loc[base | wide, columns].copy()

@@ -108,6 +108,18 @@ def _hex_rgba(hex_color: str, alpha: float = 1.0) -> str:
     return hex_color
 
 
+def _first_present(*values, default="—"):
+    """First value that is neither None nor pd.notna()-false. A plain `a or b or
+    default` chain raises TypeError on pandas' NA scalar (its __bool__ is
+    ambiguous) -- reachable whenever a column exists but a given row/clinic has
+    no value for it (e.g. ensure_opu_schema backfills absent OPU columns with
+    pd.NA rather than np.nan)."""
+    for v in values:
+        if v is not None and pd.notna(v):
+            return v
+    return default
+
+
 def _interpret_r(r: float) -> str:
     ar = abs(r)
     return "Large" if ar >= 0.50 else "Medium" if ar >= 0.30 else "Small" if ar >= 0.10 else "Negligible"
@@ -483,7 +495,17 @@ def _css() -> str:
     .legend span{{display:inline-block;margin-right:14px}}
     .swatch{{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}}
     .narrative{{background:var(--card);border-left:4px solid var(--clay);padding:14px 18px;
-               white-space:pre-wrap;border-radius:0 8px 8px 0}}
+               border-radius:0 8px 8px 0}}
+    .narrative h1{{font-size:19px;margin:0 0 14px;color:var(--text)}}
+    .narrative h2{{margin-top:22px}}
+    .narrative h3{{margin-top:16px}}
+    .narrative h1:first-child,.narrative h2:first-child,.narrative h3:first-child{{margin-top:0}}
+    .narrative p{{margin:0 0 12px;line-height:1.6}}
+    .narrative ul,.narrative ol{{margin:0 0 12px;padding-left:22px;line-height:1.6}}
+    .narrative li{{margin:3px 0}}
+    .narrative strong{{color:var(--text)}}
+    .narrative code{{background:color-mix(in srgb, var(--line) 45%, var(--bg));padding:1px 5px;
+                     border-radius:4px;font-size:.92em}}
     .excl-note{{font-size:11.5px;color:var(--muted);margin-top:6px}}
     .candidates{{border:1px solid var(--red);background:var(--red-bg);border-radius:8px;padding:12px 16px;margin:14px 0}}
     .foot{{font-size:11px;color:var(--muted);margin-top:26px}}
@@ -948,8 +970,17 @@ def _build_similarity_graph(df_u: pd.DataFrame):
         return None, None
 
     df_reset = df_u.reset_index(drop=True)
-    weights = np.array([_GRAPH_FEATURES[c] for c in feat_cols])
     x_raw = df_reset[feat_cols].apply(pd.to_numeric, errors="coerce")
+    # A feature never measured across the whole cohort (e.g. Skyfert has no MII/AFC
+    # at all) has its own median() = NaN, so fillna(median) is a no-op and leaves
+    # NaN in x_raw -> StandardScaler/cosine_similarity crash downstream. Drop such
+    # columns before imputing, re-checking the >=3-feature floor since dropping one
+    # can push a clinic below it (falls through to the same "insufficient data" path).
+    x_raw = x_raw.loc[:, x_raw.notna().any(axis=0)]
+    if x_raw.shape[1] < 3:
+        return None, None
+    feat_cols = list(x_raw.columns)
+    weights = np.array([_GRAPH_FEATURES[c] for c in feat_cols])
     x_raw = x_raw.fillna(x_raw.median())
     x_scaled = StandardScaler().fit_transform(x_raw) * weights
     sim_matrix = cosine_similarity(x_scaled)
@@ -1427,8 +1458,8 @@ def _pregnancy_journal_tab(analytics_result: dict, regression_qc_frame: pd.DataF
              "<th>Прогноз P (95% ДИ)</th><th>DT_COMPARE</th></tr>")
     rows_html = []
     for i, (_, row) in enumerate(sorted_df.iterrows(), start=1):
-        name = row.get("patient_name") or row.get("Patient Full Name") or "—"
-        pid = row.get("patient_id") or row.get("ID") or "—"
+        name = _first_present(row.get("patient_name"), row.get("Patient Full Name"))
+        pid = _first_present(row.get("patient_id"), row.get("ID"))
         repeat_n = int(repeat_counts.get(row.get(id_col), 1)) if id_col else 1
         real_values = [row.get(_JOURNAL_REAL_COLUMN[s]) for s in _JOURNAL_FUNNEL_STAGES]
         stages = funnel_map.get(row.get("cycle_uid"), {})
@@ -1605,8 +1636,8 @@ def _review_section(analytics_result: dict, regression_qc_frame: pd.DataFrame,
     for _, row in detail.iterrows():
         priority = pd.to_numeric(pd.Series([row.get("priority")]), errors="coerce").iloc[0]
         row_cls = "row-p1" if priority == 1 else ("row-p2" if priority == 2 else "row-ok")
-        name = row.get("patient_name") or row.get("Patient Full Name") or "—"
-        pid = row.get("patient_id") or row.get("ID") or "—"
+        name = _first_present(row.get("patient_name"), row.get("Patient Full Name"))
+        pid = _first_present(row.get("patient_id"), row.get("ID"))
         age = row.get("age", row.get("Age", "—"))
         preg = pd.to_numeric(pd.Series([row.get("Preg")]), errors="coerce").iloc[0]
         outcome_txt = "✅" if preg == 1 else ("❌" if preg == 0 else "—")

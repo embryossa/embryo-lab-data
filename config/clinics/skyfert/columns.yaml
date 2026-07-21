@@ -1,0 +1,59 @@
+# config/clinics/skyfert/columns.yaml — соответствия имён колонок для выгрузки
+# клиники Skyfert ("SkyFert.xlsx", один лист, один заголовок). Независим от
+# config/columns.yaml (клиника A) и от config/clinics/fertimed/columns.yaml —
+# не расширяет и не наследует их, чтобы правки под одну клинику не могли
+# задеть другую. Обоснование — docs/SKYFERT.md.
+#
+# Резолвер (ingest.resolve_columns, общий для всех клиник) приводит вход к
+# каноническому имени по aliases. У Skyfert нет колонок даты (Date OPU/ET),
+# ФИО, MII, эмбриолога/врача — этот адаптер сознательно ýже, чем клиника A/
+# Fertimed (владелец подтвердил упрощённый вариант: без MIRI/лотов/ПГТ-А/
+# разбивки по эмбриологам).
+
+canonical:
+  patient_id:     {aliases: ["ЭМК"], required: true}
+  age:            {aliases: ["Возраст"], required: true}
+  attempt_no:     {aliases: ["№ попытки"], required: true}
+  fertilization_method: {aliases: ["ЭКО"], required: false}   # IVF / ICSI / IVF+ICSI / пусто (см. docs/SKYFERT.md)
+
+  follicles:      {aliases: ["Количество фолликулов"], required: true}
+  occ:            {aliases: ["Число ОКК"], required: true}
+  inseminated:    {aliases: ["Число инсеминированных"], required: true}
+  two_pn:         {aliases: ["2 pN"], required: true}
+  cleavage_d3:    {aliases: ["Число дробящихся на 3 день"], required: true}
+  embryos_d5:     {aliases: ["Число эмбрионов 5 дня"], required: false}
+  bl_total:       {aliases: ["Число Bl"], required: true}
+  bl_good:        {aliases: ["Число Bl хор.кач-ва"], required: true}
+
+  transfer_day:     {aliases: ["День переноса"], required: true}    # пусто -> 5 (skyfert.py)
+  transfer_outcome: {aliases: ["Исход переноса"], required: true}
+  transferred:      {aliases: ["Перенесено эмбрионов"], required: true}
+  frozen:           {aliases: ["Заморожено эмбрионов"], required: true}
+
+# Нет в выгрузке вообще (не мапятся, попадут в unknown только если появятся
+# внезапно новые колонки при следующей выгрузке): Date OPU/ET, ФИО, MII, АМГ,
+# ИМТ, эмбриолог/врач, лечение, донор/суррогат. AMH/BMI импутируются общей
+# normalize.impute_amh/impute_bmi (age+follicles-fallback+occ), MII остаётся
+# NaN -> FR/OZEMA используют fallback на inseminated (общая логика kpi.py/
+# ozema.py, не Skyfert-специфичная).
+
+# Тот же словарь исхода, что у клиники A (config/columns.yaml) — текст выгрузки
+# Skyfert использует ровно эти формулировки ("беременность клиническая" /
+# "не наступила" / "биохимическая"), отдельного словаря не потребовалось.
+outcome:
+  affirmative_exact: ["да", "yes", "y", "+"]
+  negative_exact:    ["нет", "no", "n", "-", "неизвестно"]
+  positive_substrings:
+    - "клиническая беременность"
+    - "беременность клиническая"
+    - "беременность +28"
+    - "clinical pregnancy"
+    - "беременность наступила"
+  negative_substrings:          # проверяются ПЕРЕД positive
+    - "не наступила"
+    - "биохимическая"
+    - "внематочная"
+    - "замершая"
+    - "no pregnancy"
+  numeric_positive: [1]
+  numeric_negative: [0]

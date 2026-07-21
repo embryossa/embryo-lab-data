@@ -27,11 +27,11 @@ from embryo import (analytics, consult, contracts, dnn_runner, dt_runner, histor
                     ingest, kpi, lots, normalize, opu_table, ozema, pgt, privacy, reconcile,
                     regression_qc, report, tabpfn_regression_runner, tabpfn_runner)  # noqa: E402
 from embryo import _io  # noqa: E402
-from embryo.clinics import fertimed, fertimed_pgt  # noqa: E402
+from embryo.clinics import fertimed, fertimed_pgt, skyfert  # noqa: E402
 
 # Клиники с собственным ingest/normalize-адаптером (см. src/embryo/clinics/).
 # Без --clinic (клиника A) поведение не меняется ни на йоту.
-_CLINIC_NORMALIZERS = {"fertimed": fertimed.prepare}
+_CLINIC_NORMALIZERS = {"fertimed": fertimed.prepare, "skyfert": skyfert.prepare}
 # Клиники со своим ПГТ-А парсером (другой вендор/формат PDF, см.
 # src/embryo/clinics/fertimed_pgt.py). Без --clinic используется общий embryo.pgt
 # (eMap Cycle Report, клиника A) — поведение не меняется.
@@ -122,7 +122,15 @@ def _add_opu_aliases(frame: pd.DataFrame, clinic: str | None = None) -> pd.DataF
     # "_key" = ID + Date OPU: a patient can have repeat cycles (attempts) sharing one
     # passport ID, so the join/cycle identity must be per-cycle, not per-patient. "ID"
     # itself is left untouched (real passport ID) for human-facing OPU output.
-    if "patient_id" in out.columns and "date_opu" in out.columns:
+    if clinic == "skyfert":
+        # Skyfert has no date columns at all, and its "ЭМК" (patient_id) repeats
+        # across physically different patients within one export (documented
+        # collision example in docs/SKYFERT.md) — the ID+Date OPU key below, and
+        # its bare-ID fallback, are both wrong here. skyfert.build_cycle_key()
+        # (patient_id + positional row sequence) is the only reliable per-cycle
+        # identity for this clinic; must be checked before the generic branches.
+        out["_key"] = skyfert.build_cycle_key(out)
+    elif "patient_id" in out.columns and "date_opu" in out.columns:
         date_part = pd.to_datetime(out["date_opu"], errors="coerce").dt.strftime("%Y%m%d")
         key = (out["patient_id"].astype("string").str.strip().str.upper()
                + "#" + date_part.fillna("NA"))
@@ -441,6 +449,14 @@ def main(argv: list[str] | None = None) -> int:
     # patient shares one raw patient_id across cycles, so cycle_uid needs the
     # per-cycle composite, not the per-patient raw ID.
     kpi_cycles = _add_opu_aliases(kpi_cycles, clinic=args.clinic)
+    if args.clinic == "skyfert":
+        # Skyfert's export has no name column at all, and the external Digital
+        # Twin project skips any row with a blank "ФИО" outright (dt_postprocess.py:
+        # "if fio.lower() in ('итого','') or not fio: skip"). The clinic already
+        # de-identifies its export down to "ЭМК" (patient_id) only, so using it as
+        # the ФИО placeholder introduces no new PHI exposure (owner-confirmed
+        # 2026-07-21) — it only exists to keep DT from dropping every row.
+        kpi_cycles["Patient Full Name"] = kpi_cycles["patient_id"]
     kpi_cycles = privacy.add_cycle_uid(kpi_cycles, "_key", secret)
 
     # Wider lab-stage population (NOT gated by transferred>0/Preg known): feeds the
@@ -525,6 +541,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[warn] TabPFN-3 regression skipped: {regression_status}", file=sys.stderr)
 
     enriched = reconcile.enrich_opu_table(opu, predictions)
+    if args.clinic == "skyfert":
+        # enrich_opu_table/ensure_opu_schema only ever look at the Title-Case
+        # "Patient Full Name" OPU column; DT's own echo of our ЭМК placeholder
+        # comes back as its lowercase "patient_name" field (visible in the HTML
+        # report/review-list via report._first_present's fallback), which
+        # ensure_opu_schema's fixed column selection silently drops. Without
+        # this, the human-facing OPU_table_enriched.xlsx would show a blank
+        # name next to a populated "ID" (ЭМК) column.
+        enriched["Patient Full Name"] = enriched["ID"]
     exact_opu = opu_table.ensure_opu_schema(enriched)
     crosswalk_path = _project_path(cfg["privacy"]["crosswalk_file"])
     outputs = reconcile.write_reconciled_outputs(

@@ -1,0 +1,102 @@
+# config/clinics/skyfert/settings.yaml — параметры прогона для клиники Skyfert.
+# Зеркалит структуру config/clinics/fertimed/settings.yaml, но это НЕЗАВИСИМЫЙ
+# файл — правки здесь не влияют на клинику A/Fertimed и наоборот. Абсолютные
+# машинно-зависимые пути к внешним инструментам (DT/TabPFN) — в
+# config/machine.local.yaml (в .gitignore, ОБЩИЙ файл для всех клиник на этом
+# ПК, см. config/machine.local.yaml.example) — тот же внешний проект/окружение,
+# что и у клиники A/Fertimed, задаётся один раз.
+#
+# Обоснование каждого пункта ниже — docs/SKYFERT.md ("Полный прогон, 2026-07-21").
+
+paths:
+  inbox_dir: "data/inbox/skyfert"  # реальный файл сейчас лежит вне репозитория
+                                    # (см. docs/SKYFERT.md) -> всегда передавать
+                                    # явный путь аргументом, автоопределение не используется
+  processed_dir: "data/processed/skyfert"
+  agent_packets_dir: "data/processed/skyfert/agent_packets"
+  local_private_dir: "data/processed/skyfert/local_private"
+  opu_table: "data/inbox/skyfert/OPU_table_master.xlsx"  # не существует -> откат на явный входной файл (нет отдельного мастер-файла у Skyfert)
+
+external_tools:
+  # Тот же внешний проект IVF Digital Twin, что и у клиники A/Fertimed.
+  # project_dir/run_cmd/results_dir -> config/machine.local.yaml (общий).
+  digital_twin:
+    launch: true
+    mode: batch
+    project_dir: ""
+    run_cmd: 'RUN_BATCH.bat {input}'
+    input_target: ""
+    results_dir: ""
+  tabpfn:
+    launch: true
+    mode: batch
+    project_dir: ""
+    run_cmd: 'run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
+    results_dir: ""
+    predictions_glob: "tabpfn_predictions*.csv"
+    output: "data/processed/skyfert/local_private/tabpfn_predictions.csv"  # отдельный файл от других клиник
+  # Владелец подтвердил (2026-07-21, вечер): включить как у Fertimed —
+  # неправомерно было выключать по умолчанию. Та же EVO и то же окружение,
+  # что и у клиники A/Fertimed.
+  dnn_verifier:
+    enabled: true
+    project_dir: ""
+    model_path: ""
+    run_cmd: ""
+    output: "data/processed/skyfert/evo_predictions.csv"
+    scaler_path: ""
+  # Владелец подтвердил (2026-07-21, вечер): включить как у Fertimed. Известная
+  # проблема качества выгрузки (cleavage_d3 > two_pn на 57% циклов, см.
+  # docs/SKYFERT.md) может зашумлять сравнение факт/P10-P90 по воронке —
+  # интерпретировать regression QC для Skyfert с этой оговоркой, не как повод
+  # не запускать её вовсе.
+  tabpfn_regression:
+    enabled: true
+    project_dir: ""
+    run_cmd: ""
+    output: "data/processed/skyfert/local_private/tabpfn_regression_full.csv"
+
+thresholds:
+  tabpfn_ci_width_pp: 20
+  cultivation_window_days: 6   # не используется (MIRI/лоты выключены), оставлено для симметрии контрактов
+
+privacy:
+  secret_file: "data/processed/skyfert/local_private/cycle_uid.key"
+  crosswalk_file: "data/processed/skyfert/local_private/cycle_uid_crosswalk.csv"
+
+# Формула унаследована от клиники A как отправная точка (age+AFC(->follicles)+OCC);
+# Skyfert не заявляла свою — см. docs/SKYFERT.md. Пересмотреть отдельно, если
+# понадобится другая калибровка.
+amh_impute:
+  a_afc: 0.16
+  b_occ: 0.05
+  c_age: 0.08
+  intercept: 0.5
+  floor: 0.1
+  ceil: 12.0
+
+bmi_impute:
+  constant: 24.0
+
+join:
+  dt_key: "_key"
+  opu_key: "patient_id"
+  tabpfn_key: "patient_id"
+
+miri_logs:
+  enabled: false   # у Skyfert нет логов инкубатора — гейт в run_analysis.py пропускает шаг целиком
+
+consumable_lots:
+  enabled: false   # у Skyfert нет выгрузки лотов расходников (Airtable)
+  airtable:
+    base_id: ""
+    items_table_id: ""
+    changes_table_id: ""
+    token: ""
+
+pgt:
+  enabled: false   # у Skyfert нет ПГТ-А отчётов в этом прогоне
+
+analytics:
+  datalore_notebook_reference: "notebooks/reference/Data_Twin_analytics.ipynb"
+  primary_prob_col: ["DIGITAL TWIN", "p_per_transfer"]

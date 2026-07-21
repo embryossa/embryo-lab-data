@@ -40,7 +40,12 @@ def load_table(path: str) -> pd.DataFrame:
     # поэтому "полностью пустая строка" проверяется без их учёта.
     non_bool = df.columns[df.dtypes != "bool"]
     blank = df[non_bool].isna().all(axis=1)
-    return df.loc[~blank].reset_index(drop=True)
+    # Формула Excel (напр. "Age" от DOB) может вернуть 0 на строке-паддинге за
+    # пределами реальных данных, а не NaN — тогда строка не проходит строгую
+    # проверку "все NaN", хотя не несёт ни одного реального наблюдения (реальные
+    # строки этого проекта всегда заполняют минимум ~14 полей, паддинг — не больше 1).
+    stray = df[non_bool].notna().sum(axis=1) <= 1
+    return df.loc[~(blank | stray)].reset_index(drop=True)
 
 
 def resolve_columns(df: pd.DataFrame, columns_cfg: dict) -> tuple[pd.DataFrame, list, list]:
