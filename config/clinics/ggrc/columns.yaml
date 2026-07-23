@@ -1,0 +1,73 @@
+# config/clinics/ggrc/columns.yaml — соответствия имён колонок для выгрузки
+# клиники GGRC (Armenia). Независим от config/columns.yaml (клиника A) и от
+# config/clinics/fertimed/columns.yaml — не расширяет и не наследует их.
+#
+# Резолвер (ingest.resolve_columns, общий для всех клиник) приводит вход к
+# каноническому имени по aliases. Бизнес-правила (composite-исход, оценка
+# follicles, сумма Cryo-колонок в frozen, приоритет эмбриолог/врач) реализованы
+# в src/embryo/clinics/ggrc.py — см. docs/GGRC.md.
+#
+# GGRC поставляет ДВА файла с разными наборами колонок:
+#   - "ivf_master_13 (transfer).xlsx" — eligible-когорта (перенос + известный
+#     исход), резолвится через ggrc.prepare().
+#   - "ivf_master_13 kpi.xlsx" (лист "IVF Master DB") — широкая lab-популяция
+#     для KPI/OZEMA, резолвится через ggrc.prepare_wide(). Не несёт "Attempts"/
+#     "Pregnancy" — там, где алиас есть только в одном из файлов, поле в другом
+#     файле останется not present, что ggrc.py обрабатывает явными fallback'ами.
+
+canonical:
+  patient_id:     {aliases: ["OPU Code"], required: true}
+  patient_name:   {aliases: ["Patients name"], required: false}  # 4/29 строк transfer-файла пустые -> fallback в ggrc.py
+  age:            {aliases: ["Age"], required: true}
+  attempt_no:     {aliases: ["Attempts"], required: false}  # нет в kpi-wide файле -> fallback 1 в ggrc.py
+  date_opu:       {aliases: ["OPU Date"], required: false}
+
+  occ:            {aliases: ["Oocytes N"], required: true}
+  mii:            {aliases: ["MII"], required: false}
+  inseminated:    {aliases: ["number of inseminated oocytes"], required: true}
+  two_pn:         {aliases: ["2pN"], required: true}
+  three_pn:       {aliases: ["3pN or more"], required: false}
+  degrade:        {aliases: ["Degrade"], required: false}
+  cleavage_d3:    {aliases: ["number of embryos dividing on day 3"], required: true}
+  # "CombinedDays" (transfer-файл) и "D5-D6-D7" (kpi-wide файл) — одно и то же
+  # поле (сумма Day5+Day6-7 бластоцист) под разными заголовками в двух файлах.
+  bl_total:       {aliases: ["CombinedDays", "D5-D6-D7"], required: true}
+  bl_good:        {aliases: ["Good quality BL"], required: true}
+
+  transfer_outcome: {aliases: ["Pregnancy"], required: false}  # нет в kpi-wide файле; composite-парсинг в ggrc.py, не общий outcome-словарь ниже
+  transferred:      {aliases: ["Number of transfered embryos"], required: false}
+
+  fertilization_method: {aliases: ["Fertilization Method"], required: false}
+  sperm_source:         {aliases: ["Sperm Source"], required: false}
+  embryologist:         {aliases: ["Embryologist IVF/ICSI"], required: false}  # владелец подтвердил 2026-07-23: роль, проводившая оплодотворение
+  doctor:                {aliases: ["Doctor"], required: false}
+
+  amh:            {aliases: ["AMH"], required: false}   # нет в выгрузке -> импутация age+AFC(follicles)+OCC
+  bmi:            {aliases: ["BMI"], required: false}   # нет в выгрузке -> константа
+
+# ФИО Мужа, Oocyte Source, эмбриолог(и) на пункции/денудации/переносе/биопсии,
+# врач/эмбриолог переноса, морфология/описание/даты витрификации, флаг
+# суррогатной программы — намеренно НЕ мапятся (не используются этим отчётом,
+# попадут в unknown-предупреждение резолвера — это ожидаемо, не ошибка). См.
+# docs/GGRC.md за списком и обоснованием. "follicles" ЦЕЛИКОМ отсутствует как
+# реальная колонка в выгрузке GGRC — вычисляется в ggrc.py как оценка
+# (round(Oocytes N * 1.44)), не резолвится отсюда.
+
+# Общий словарь исхода клиники A НЕ используется для GGRC (composite-строки
+# "1 No, 1 Yes" разбираются собственным классификатором ggrc._classify_outcome),
+# но normalize.impute_amh/impute_bmi ожидают наличия этого ключа в columns_cfg.
+outcome:
+  affirmative_exact: ["yes", "y", "да"]
+  negative_exact: ["no", "n", "нет"]
+  positive_substrings: ["yes"]
+  negative_substrings: ["no"]
+  numeric_positive: [1]
+  numeric_negative: [0]
+
+# Исключения для таблиц KPI эмбриолог/врач (competency dashboard) — см.
+# docs/GGRC.md/docs/CONTRACTS.md. В текущей выгрузке значений TESE/SMF в
+# "Sperm Source" не встречается, но словарь на будущее.
+competency_exclusion:
+  no_retrieval_tokens: ["NO", "нет", "no retrieval"]
+  freeze_all_tokens: ["Cryo", "крио", "freeze-all", "freeze all"]
+  surgical_sperm_tokens: ["TESE", "SMF", "MESA", "PESA"]

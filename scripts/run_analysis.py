@@ -27,15 +27,26 @@ from embryo import (analytics, consult, contracts, dnn_runner, dt_runner, histor
                     ingest, kpi, lots, normalize, opu_table, ozema, pgt, privacy, reconcile,
                     regression_qc, report, tabpfn_regression_runner, tabpfn_runner)  # noqa: E402
 from embryo import _io  # noqa: E402
-from embryo.clinics import fertimed, fertimed_pgt, skyfert  # noqa: E402
+from embryo.clinics import fertimed, fertimed_pgt, ggrc, skyfert  # noqa: E402
 
 # Клиники с собственным ingest/normalize-адаптером (см. src/embryo/clinics/).
 # Без --clinic (клиника A) поведение не меняется ни на йоту.
-_CLINIC_NORMALIZERS = {"fertimed": fertimed.prepare, "skyfert": skyfert.prepare}
+_CLINIC_NORMALIZERS = {"fertimed": fertimed.prepare, "skyfert": skyfert.prepare, "ggrc": ggrc.prepare}
 # Клиники со своим ПГТ-А парсером (другой вендор/формат PDF, см.
-# src/embryo/clinics/fertimed_pgt.py). Без --clinic используется общий embryo.pgt
-# (eMap Cycle Report, клиника A) — поведение не меняется.
-_CLINIC_PGT_MODULES = {"fertimed": fertimed_pgt}
+# src/embryo/clinics/fertimed_pgt.py). GGRC — не PDF, а колонки, уже встроенные
+# в её выгрузку (ggrc.analyze_reports читает их напрямую, см. docs/GGRC.md).
+# Без --clinic используется общий embryo.pgt (eMap Cycle Report, клиника A) —
+# поведение не меняется.
+_CLINIC_PGT_MODULES = {"fertimed": fertimed_pgt, "ggrc": ggrc}
+# Клиники, чья широкая lab-популяция (для KPI эмбриолог/врач + OZEMA) приходит
+# отдельным ФАЙЛОМ, а не срезом того же входного файла (все остальные клиники —
+# см. "lab_cycles" ниже). Значение — clinic-adapter функция той же формы
+# prepare(raw, columns_cfg, cfg) -> (df, unknown), см. ggrc.prepare_wide.
+_CLINIC_WIDE_LOADERS = {"ggrc": ggrc.prepare_wide}
+# Клиники, чья широкая lab-популяция несёт дополнительные "сырые" колонки,
+# нужные клиничному ПГТ-модулю выше (embedded PGT-A counts для GGRC — см.
+# ggrc.PGT_RAW_COLUMNS/ggrc.analyze_reports).
+_CLINIC_PGT_EXTRA_COLUMNS = {"ggrc": ggrc.PGT_RAW_COLUMNS}
 
 
 def _merge(base: dict, override: dict) -> dict:
@@ -426,9 +437,13 @@ def main(argv: list[str] | None = None) -> int:
                              "поведение без флага не меняется)")
     parser.add_argument("--fertimed", action="store_true",
                         help="ярлык для --clinic fertimed")
+    parser.add_argument("--ggrc", action="store_true",
+                        help="ярлык для --clinic ggrc")
     args = parser.parse_args(argv)
     if args.fertimed and not args.clinic:
         args.clinic = "fertimed"
+    if args.ggrc and not args.clinic:
+        args.clinic = "ggrc"
 
     os.chdir(ROOT)
     config_dir = ROOT / "config" if not args.clinic else ROOT / "config" / "clinics" / args.clinic
@@ -463,7 +478,17 @@ def main(argv: list[str] | None = None) -> int:
     # embryologist/doctor KPI competency tables and OZEMA, both of which must judge
     # lab performance regardless of whether a transfer happened (matches the owner's
     # Vienna-style dashboard and OZEMA sheet, which flag freeze-all/no-ET cycles too).
-    lab_cycles = _add_opu_aliases(normalized, clinic=args.clinic)
+    # For most clinics this is a wider ROW SLICE of the same input file; GGRC instead
+    # hands us this population as a separate FILE (see docs/GGRC.md) — resolved
+    # through its own clinic-adapter function registered in _CLINIC_WIDE_LOADERS.
+    wide_loader = _CLINIC_WIDE_LOADERS.get(args.clinic)
+    if wide_loader:
+        wide_path = _project_path(cfg["paths"]["kpi_wide_file"])
+        wide_raw = ingest.load_table(str(wide_path))
+        wide_normalized, _ = wide_loader(wide_raw, columns_cfg, cfg)
+        lab_cycles = _add_opu_aliases(wide_normalized, clinic=args.clinic)
+    else:
+        lab_cycles = _add_opu_aliases(normalized, clinic=args.clinic)
     lab_cycles = privacy.add_cycle_uid(lab_cycles, "_key", secret)
     ozema_cycles = ozema.build_ozema_table(lab_cycles, columns_cfg)
     ozema_candidates = ozema.genetic_counseling_candidates(ozema_cycles)
@@ -659,7 +684,8 @@ def main(argv: list[str] | None = None) -> int:
     pcfg = cfg.get("pgt", {})
     if not args.skip_pgt and pcfg.get("enabled") and not kpi_cycles.empty:
         reports_dir = _project_path(pcfg.get("reports_dir", "data/processed/local_private/pgt_reports"))
-        worklist_cols = ["cycle_uid", "Patient Full Name", "Date OPU", "Date ET"]
+        worklist_cols = (["cycle_uid", "Patient Full Name", "Date OPU", "Date ET"]
+                          + _CLINIC_PGT_EXTRA_COLUMNS.get(args.clinic, []))
         worklist_parts = [kpi_cycles[[c for c in worklist_cols if c in kpi_cycles.columns]]]
         if not ares["review_list"].empty:
             worklist_parts.append(

@@ -1,0 +1,127 @@
+# config/clinics/ggrc/settings.yaml — параметры прогона для клиники GGRC (Armenia).
+# Зеркалит структуру config/clinics/fertimed/settings.yaml, независимый файл —
+# правки здесь не влияют на другие клиники. Абсолютные машинно-зависимые пути
+# к внешним инструментам (DT/TabPFN/DNN/TabPFN-3) — в config/machine.local.yaml
+# (в .gitignore, ОБЩИЙ для всех клиник на этом ПК) — тот же внешний
+# проект/окружение, что и у Fertimed/клиники A, задаётся один раз там.
+#
+# Обоснование каждого пункта — docs/GGRC.md.
+
+paths:
+  inbox_dir: "data/inbox/ggrc/transfer"           # только eligible-когорта (transfer-файл)
+  kpi_wide_file: "data/inbox/ggrc/kpi_wide/ivf_master_13 kpi.xlsx"  # широкая lab-популяция для KPI/OZEMA
+  miri_logs_dir: "data/miri_logs/ggrc"             # не используется (miri_logs.enabled=false), для симметрии
+  processed_dir: "data/processed/ggrc"
+  agent_packets_dir: "data/processed/ggrc/agent_packets"
+  local_private_dir: "data/processed/ggrc/local_private"
+  sample_dir: "data/sample/ggrc"
+  opu_table: "data/inbox/ggrc/OPU_table.xlsx"      # обычно не существует -> используется inbox_dir файл
+
+external_tools:
+  # Тот же внешний проект IVF Digital Twin, что и у клиники A/Fertimed —
+  # фильтрация по "_key" в run_analysis.py уже изолирует строки этого прогона.
+  digital_twin:
+    launch: true
+    mode: batch
+    project_dir: ""
+    run_cmd: 'RUN_BATCH.bat {input}'
+    input_target: ""
+    results_dir: ""
+  tabpfn:
+    launch: true
+    mode: batch
+    project_dir: ""
+    run_cmd: 'run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
+    results_dir: ""
+    predictions_glob: "tabpfn_predictions*.csv"
+    output: "data/processed/ggrc/tabpfn_predictions.csv"
+  # Владелец подтвердил (2026-07-23): та же DNN и то же окружение, что у
+  # клиники A/Fertimed — не отдельная модель.
+  dnn_verifier:
+    enabled: true
+    project_dir: ""
+    model_path: ""
+    run_cmd: ""
+    output: "data/processed/ggrc/evo_predictions.csv"
+    scaler_path: ""
+  # Включено владельцем 2026-07-23 после успешного первого прогона (n=29,
+  # DT/TabPFN/DNN отработали штатно) — тот же скрипт/окружение, что у клиники
+  # A/Fertimed. Сбой этого шага мягкий (не блокирует пайплайн).
+  tabpfn_regression:
+    enabled: true
+    project_dir: ""
+    run_cmd: ""
+    output: "data/processed/ggrc/local_private/tabpfn_regression_full.csv"
+
+thresholds:
+  tabpfn_ci_width_pp: 20
+  cultivation_window_days: 6   # не используется (MIRI выключен), для симметрии контрактов
+
+privacy:
+  secret_file: "data/processed/ggrc/local_private/cycle_uid.key"
+  crosswalk_file: "data/processed/ggrc/local_private/cycle_uid_crosswalk.csv"
+
+# Унаследовано от клиники A/Fertimed как отправная точка (age+AFC(->follicles)+OCC);
+# GGRC не заявляла свою формулу. AMH/BMI отсутствуют в выгрузке целиком.
+amh_impute:
+  a_afc: 0.16
+  b_occ: 0.05
+  c_age: 0.08
+  intercept: 0.5
+  floor: 0.1
+  ceil: 12.0
+
+bmi_impute:
+  constant: 24.0
+
+join:
+  dt_key: "_key"
+  opu_key: "patient_id"
+  tabpfn_key: "patient_id"
+
+miri_logs:
+  enabled: false   # владелец: без логов инкубатора для GGRC
+
+consumable_lots:
+  enabled: false   # владелец: без учёта расходников для GGRC
+  airtable:
+    base_id: ""
+    items_table_id: ""
+    changes_table_id: ""
+    token: ""
+
+# ПГТ-А уже в самой выгрузке (колонки Biopsy Done/Tested Embryos/Euploid/...) —
+# не требует парсинга PDF/скачивания с портала, в отличие от клиники A/Fertimed.
+# src/embryo/clinics/ggrc.py::analyze_reports читает эти колонки напрямую из
+# worklist, reports_dir ниже нужен только чтобы пройти общий .is_dir()-гейт в
+# scripts/run_analysis.py (PDF там не ищутся).
+pgt:
+  enabled: true
+  portal_url: ""
+  reports_dir: "data/processed/ggrc/local_private"
+
+analytics:
+  datalore_notebook_reference: "notebooks/reference/Data_Twin_analytics.ipynb"
+  primary_prob_col: ["DIGITAL TWIN", "bayes_mean", "p_per_transfer"]
+
+# Тот же контракт признаков DT, что и у клиники A/Fertimed — все поля
+# выводимы из канонической формы GGRC тоже (follicles — оценка, см. docs/GGRC.md).
+selected_features:
+  - "Возраст"
+  - "№ попытки"
+  - "Количество фолликулов"
+  - "Число ОКК"
+  - "Число инсеминированных"
+  - "2 pN"
+  - "Число дробящихся на 3 день"
+  - "Число Bl"
+  - "Число Bl хор.кач-ва"
+  - "Частота оплодотворения"
+  - "Частота дробления"
+  - "Частота формирования бластоцист"
+  - "Частота формирования бластоцист хорошего качества"
+  - "Частота получения ОКК"
+  - "Число эмбрионов 5 дня"
+  - "Заморожено эмбрионов"
+  - "Перенесено эмбрионов"
+  - "KPIScore"
