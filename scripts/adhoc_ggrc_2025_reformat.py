@@ -52,11 +52,20 @@ Differences handled here (verified against the real files):
     of this data, e.g. "KPIScore", "Predictions", "Частота оплодотворения")
     -- these are dropped so they cannot be confused with this pipeline's own
     freshly computed numbers (CLAUDE.md: "числа не пересчитывать в LLM").
-  - Real "number of follicles" data present in the transfer file is
-    intentionally NOT threaded through: docs/GGRC.md records the owner's
-    2026-07-23 decision to keep using the round(Oocytes N * 1.44) estimate
-    for GGRC regardless (ggrc.py's `follicles` is not a resolvable column at
-    all), so this script does not touch that behaviour.
+  - "number of follicles" IS present in the transfer file (561/561 rows) and
+    is intentionally NOT threaded through -- do not "fix" this. Checked
+    2026-07-26: the column is itself derived from Oocytes N, not a measured
+    aspiration count. 50 distinct OCC values map to exactly 50 distinct
+    (OCC, follicles) pairs, the ratio is confined to 1.21-1.23
+    (~ ceil(OCC * 1.21)), and every follicles==0 row is an OCC==0 row.
+    Threading it through would replace the constant OCCR 69.4%
+    (= 1/1.44, from ggrc.py's round(Oocytes N * 1.44) estimate) with a
+    constant 80.6% -- no added signal, but 80.6% falls inside the Vienna
+    competency band 70-80%, so the metric would start reading as "doctors
+    are fine" while still measuring nothing. Owner decision 2026-07-26:
+    keep the 1.44 estimate as is; OCCR for GGRC is not informative either
+    way, and a genuine per-aspiration follicle count has to come from the
+    clinic. See docs/GGRC.md "follicles — оценка, не измерение".
 
 Output: two standardized .xlsx files under data/inbox/ggrc/_2025_adapted/,
 column layout matching the existing production files 1:1 (columns absent in
