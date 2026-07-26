@@ -13,6 +13,14 @@ description: Vienna Consensus KPI definitions, formulas, lower control limits (L
 - MIIR  = MII / OCC              — maturity rate; только при фактически известном MII
 - 3pNR  = 3pN / OCC ;  DegR = Degrade / MII
 
+**Знаменатель TGBDR — 2pN, а НЕ число бластоцист.** Это единственная метрика, у которой
+знаменатель расходится с одноимённым показателем модельного слоя: CSDI (и наша воронка,
+строка `Bl→Good`) считают долю хороших от ВСЕХ бластоцист (`good/Bl`), а TGBDR — от 2pN.
+Одна и та же лаборатория даёт `Bl→Good` ≈ 70% и TGBDR ≈ 43% одновременно; это не
+противоречие. Мост: `TGBDR = (Bl→Good) × BlR`. Никогда не сравнивать `Bl→Good` или
+модельную good-rate с порогами TGBDR (30%/40%) — сравнение с ними допустимо только для
+величины с знаменателем 2pN. Подробнее — skill `dt-ensemble`.
+
 Для FR/ClR/BlR/TGBDR/OCCR/MIIR контроль нижний: значение ниже порога = сигнал.
 Для DegR и 3pNR контроль верхний: значение выше порога = сигнал. В отчёте всегда
 показываются direction, competency, benchmark и 95% CI. FR benchmark фиксирован 75%.
