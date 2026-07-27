@@ -1,13 +1,17 @@
 @echo off
 chcp 65001 >nul
 REM ================================================================
-REM  One-click sync of existing processed results to Teable.
-REM  Output goes to sync_log.txt; sync_done.flag marks completion.
-REM  Writes to self-hosted Teable (Docker, http://127.0.0.1:3000) — the
-REM  cloud free-plan space hit its 1000-row cap. Start the container first:
-REM  cd self-hosted && docker compose up -d
-REM  Two-Line  -> base bse4b0RSHeKI7ZGEdvC  (processed\)
-REM  Fertimed  -> base bsef6WTgVoVeJeJD1N7  (processed\fertimed\)
+REM  Синхронизация processed-файлов ВСЕХ клиник в self-hosted Teable
+REM  + пересборка локального вьюера карточек пациенток.
+REM
+REM  Ничего не пересчитывает: берёт уже готовые data/processed/<клиника>.
+REM  Список клиник и их base_id — в teable_config.local.json ("clinics"),
+REM  здесь никаких id не зашито. Новая клиника: добавить её в конфиг и
+REM  выполнить `python teable_bootstrap.py --all`.
+REM
+REM  Неинтерактивный вариант (для Планировщика заданий): вывод в
+REM  sync_log.txt, sync_done.flag отмечает завершение.
+REM  Контейнеры должны быть подняты: cd self-hosted ^&^& docker compose up -d
 REM ================================================================
 setlocal
 cd /d "%~dp0"
@@ -18,11 +22,11 @@ del /q sync_done.flag 2>nul
   echo ==== DEPENDENCIES ====
   "%PY%" -m pip install -r requirements.txt --disable-pip-version-check
   echo.
-  echo ==== TWO-LINE ====
-  "%PY%" teable_sync.py --config teable_config.local.json
+  echo ==== SCHEMA ^(создать/дополнить базы всех клиник^) ====
+  "%PY%" teable_bootstrap.py --all
   echo.
-  echo ==== FERTIMED ====
-  "%PY%" teable_sync.py --config teable_config.local.json --base bsef6WTgVoVeJeJD1N7 --clinic "Fertimed" --processed "C:\Users\User\Desktop\IVF\AI\embryo-lab-data\data\processed\fertimed"
+  echo ==== SYNC ^(все клиники + карточки^) ====
+  "%PY%" teable_sync.py --all
   echo.
   echo ==== FINISHED ====
 ) > sync_log.txt 2>&1

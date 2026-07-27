@@ -1,16 +1,20 @@
 @echo off
 chcp 65001 >nul
 REM ================================================================
-REM  IVF Digital Twin -> Teable  (обе клиники, без нового анализа)
-REM  Пишет в self-hosted Teable (Docker, http://127.0.0.1:3000) — облачный
-REM  free-план исчерпан лимитом строк спейса, см. teable_config.json.
-REM  Two-Line -> base bse4b0RSHeKI7ZGEdvC   (папка ...\processed)
-REM  Fertimed -> base bsef6WTgVoVeJeJD1N7   (папка ...\processed\fertimed)
+REM  IVF Digital Twin -> Teable: все клиники, без нового анализа.
+REM  Интерактивный вариант (с паузой в конце). Для расписания —
+REM  sync_all_clinics.bat.
 REM
-REM  Требуется рядом: teable_sync.py, teable_config.local.json (с локальным
-REM  токеном), requirements.txt, и запущенный контейнер self-hosted Teable
-REM  (cd self-hosted && docker compose up -d). Просто дважды кликните по
-REM  этому файлу.
+REM  Клиники, их base_id и папки processed берутся ТОЛЬКО из
+REM  teable_config.local.json (секция "clinics") — в этом файле
+REM  ничего не зашито. Пишет в self-hosted Teable http://127.0.0.1:3000,
+REM  карточки пациенток — http://127.0.0.1:8788.
+REM
+REM  Требуется рядом: teable_sync.py, teable_common.py, teable_schema.py,
+REM  cards_build.py, teable_config.local.json (с локальным токеном),
+REM  requirements.txt и поднятые контейнеры:
+REM      cd self-hosted ^&^& docker compose up -d
+REM  Просто дважды кликните по этому файлу.
 REM ================================================================
 setlocal
 cd /d "%~dp0"
@@ -27,17 +31,17 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo ===================== TWO-LINE (local Teable, base bse4b0RSHeKI7ZGEdvC) =====================
-"%PY%" teable_sync.py --config teable_config.local.json
-if %ERRORLEVEL% NEQ 0 echo [!] Two-Line: синхронизация завершилась с ошибкой (код %ERRORLEVEL%).
+echo ===================== СХЕМА БАЗ =====================
+"%PY%" teable_bootstrap.py --all
+if %ERRORLEVEL% NEQ 0 echo [!] Схема: ошибка (код %ERRORLEVEL%).
 
 echo.
-echo ===================== FERTIMED (local Teable, base bsef6WTgVoVeJeJD1N7) =====================
-"%PY%" teable_sync.py --config teable_config.local.json --base bsef6WTgVoVeJeJD1N7 --clinic "Fertimed" --processed "C:\Users\User\Desktop\IVF\AI\embryo-lab-data\data\processed\fertimed"
-if %ERRORLEVEL% NEQ 0 echo [!] Fertimed: синхронизация завершилась с ошибкой (код %ERRORLEVEL%).
+echo ===================== СИНХРОНИЗАЦИЯ =====================
+"%PY%" teable_sync.py --all
+if %ERRORLEVEL% NEQ 0 echo [!] Синхронизация завершилась с ошибкой (код %ERRORLEVEL%).
 
 echo.
 echo ===================== ГОТОВО =====================
-echo Проверьте базы в Teable. Окно можно закрыть.
+echo Базы: http://127.0.0.1:3000    Карточки: http://127.0.0.1:8788
 pause
 endlocal

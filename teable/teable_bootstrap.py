@@ -1,172 +1,352 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-teable_bootstrap.py — create the IVF Digital Twin 6-table schema in a Teable base.
+"""teable_bootstrap.py — create or upgrade the per-clinic Teable base schema.
 
-Use this to stand up an identical base for EACH clinic ("one base per clinic").
-It either creates a brand-new base inside a space, or fills an existing empty base.
+"One base per clinic". This script applies teable_schema.schema() to a base:
+
+  * a clinic whose registry entry has no base_id gets a brand-new base created
+    in the configured space, and the new id is written back into the config;
+  * a clinic that already has a base is UPGRADED — missing tables are created,
+    missing fields are added to existing tables. Nothing is renamed, retyped or
+    deleted, so existing records and their data are never touched.
 
 Examples:
-    # create a new base named for the clinic inside a space, then build tables:
-    python teable_bootstrap.py --space spc4wPGypHLxXSI6JWO --name "Lapino IVF — Digital Twin"
+    python teable_bootstrap.py --all                # every clinic in the registry
+    python teable_bootstrap.py --clinic ggrc        # one clinic
+    python teable_bootstrap.py --all --dry-run      # show what would change
 
-    # build the schema inside an existing (empty) base:
-    python teable_bootstrap.py --base bseXXXXXXXXXXXXXXX
-
-Auth: set the token in teable_config.json (same file the sync uses) or pass --token.
-Dependency:  pip install requests
+Dependency:  pip install -r requirements.txt
 """
 
+from __future__ import annotations
+
 import argparse
-import json
-import os
 import sys
-import requests
 
-TZ = "Asia/Tashkent"  # change per clinic if needed
-
-
-def num(p):
-    return {"type": "number", "options": {"formatting": {"type": "decimal", "precision": p}}}
+import teable_common as tc
+import teable_schema as ts
 
 
-def date(withtime=False):
-    return {"type": "date", "options": {"formatting": {
-        "date": "YYYY-MM-DD", "time": "HH:mm" if withtime else "None", "timeZone": TZ}}}
+def _resolve_link(field: dict, table_ids: dict) -> dict:
+    """Turn a schema link placeholder into a concrete foreignTableId payload."""
+    body = {k: v for k, v in field.items() if k != "_link_to"}
+    target = field["_link_to"]
+    if target not in table_ids:
+        raise SystemExit(f"link target table '{target}' does not exist yet "
+                         f"— check the order of teable_schema.schema()")
+    body["options"] = dict(body.get("options") or {})
+    body["options"]["foreignTableId"] = table_ids[target]
+    return body
 
 
-def sel(choices):
-    return {"type": "singleSelect", "options": {"choices": choices}}
+def apply_schema(tb: tc.Teable, base_id: str, tz: str, dry_run: bool = False) -> dict:
+    """Create missing tables / fields. Returns {'tables': n, 'fields': n}."""
+    table_ids = tc.resolve_tables(tb, base_id)
+    made_tables = made_fields = 0
+
+    for table in ts.schema(tz):
+        key, name, fields = table["key"], table["name"], table["fields"]
+
+        if key not in table_ids:
+            # records:[] — without it Teable seeds every new table with three
+            # blank rows, which would then show up as phantom cycles/runs.
+            body = {"name": name, "records": [],
+                    "fields": [_resolve_link(fl, table_ids) if "_link_to" in fl else fl
+                               for fl in fields]}
+            if dry_run:
+                print(f"  [dry] + table {name}  ({len(fields)} fields)")
+                # A placeholder id keeps later link targets resolvable in dry-run.
+                table_ids[key] = f"DRYRUN::{key}"
+                made_tables += 1
+                continue
+            created = tb.create_table(base_id, body)
+            table_ids[key] = created["id"]
+            made_tables += 1
+            print(f"  + table {name}  ({created['id']}, {len(created['fields'])} fields)")
+            continue
+
+        table_id = table_ids[key]
+        if str(table_id).startswith("DRYRUN::"):
+            continue
+        have = {fl["name"] for fl in tb.fields(table_id)}
+        missing = [fl for fl in fields if fl["name"] not in have]
+        for fl in missing:
+            body = _resolve_link(fl, table_ids) if "_link_to" in fl else dict(fl)
+            if dry_run:
+                print(f"  [dry] + field {name} :: {fl['name']} ({fl['type']})")
+            else:
+                try:
+                    tb.create_field(table_id, body)
+                except Exception as exc:  # noqa: BLE001 - report and keep going
+                    # A URL-formatted text field is the one spec a older Teable
+                    # build may reject; fall back to plain text rather than
+                    # aborting the whole upgrade.
+                    if body.get("options", {}).get("showAs"):
+                        tb.create_field(table_id, {"name": fl["name"],
+                                                   "type": "singleLineText"})
+                        print(f"  ~ field {name} :: {fl['name']} (plain text fallback)")
+                        made_fields += 1
+                        continue
+                    print(f"  [!] field {name} :: {fl['name']} failed: {exc}")
+                    continue
+                print(f"  + field {name} :: {fl['name']}")
+            made_fields += 1
+
+    return {"tables": made_tables, "fields": made_fields}
 
 
-def txt():
-    return {"type": "singleLineText"}
+def apply_views(tb: tc.Teable, base_id: str, dry_run: bool = False) -> int:
+    """Create the working views (tabs) that do not exist yet. Never edits an
+    existing view — the owner's own layout tweaks in Teable are left alone."""
+    table_ids = tc.resolve_tables(tb, base_id)
+    made = 0
+    for table_key, defs in ts.views().items():
+        table_id = table_ids.get(table_key)
+        if not table_id:
+            continue
+        fields = {f["name"]: f["id"] for f in tb.fields(table_id)}
+        have = {v["name"] for v in tb.views(table_id)}
+        for view in defs:
+            if view["name"] in have:
+                continue
+            body = {"name": view["name"], "type": view.get("type", "grid")}
+
+            sort_objs = [{"fieldId": fields[n], "order": o}
+                         for n, o in view.get("sort", []) if n in fields]
+            if sort_objs:
+                body["sort"] = {"sortObjs": sort_objs, "manualSort": False}
+
+            filter_set = [{"fieldId": fields[n], "operator": op, "value": val}
+                          for n, op, val in view.get("filter", []) if n in fields]
+            if filter_set:
+                body["filter"] = {"conjunction": "and", "filterSet": filter_set}
+
+            columns = [c for c in view.get("columns", []) if c in fields]
+            if columns:
+                # Listed columns come first in order; everything else is hidden
+                # rather than deleted, so no data ever disappears from the table.
+                meta = {fields[c]: {"order": i, "hidden": False}
+                        for i, c in enumerate(columns)}
+                for i, (name, fid) in enumerate(fields.items()):
+                    if name not in columns:
+                        meta[fid] = {"order": 1000 + i, "hidden": True}
+                body["columnMeta"] = meta
+
+            if dry_run:
+                print(f"  [dry] + view {table_key} :: {view['name']}")
+            else:
+                try:
+                    tb.create_view(table_id, body)
+                except Exception as exc:  # noqa: BLE001 - a view is not worth aborting for
+                    print(f"  [!] view {table_key} :: {view['name']} failed: {exc}")
+                    continue
+                print(f"  + view {table_key} :: {view['name']}")
+            made += 1
+    return made
 
 
-def longtxt():
-    return {"type": "longText"}
+def apply_layout(tb: tc.Teable, base_id: str, dry_run: bool = False) -> int:
+    """Make every clinic's base look identical: same table names, same table
+    order, same tab order, same column order.
 
+    A base that was upgraded field-by-field ends up different from one created
+    from scratch — later tables land at the end of the sidebar, later fields at
+    the end of every view, and a table renamed in the schema keeps its old
+    title. This pass reconciles all three. It only ever changes names, order and
+    position: hidden/visible flags the owner set by hand are preserved, and the
+    curated column sets of the managed tabs are left exactly as declared.
+    """
+    moved = 0
 
-FLAG = [{"name": "✅ в норме", "color": "greenLight1"},
-        {"name": "⚠️ вне ±30%", "color": "redLight1"},
-        {"name": "— н/д", "color": "grayLight1"}]
+    tables = tb.tables(base_id)
+    current = [t["name"].split(" —")[0].strip() for t in tables]
+    by_key = dict(zip(current, (t["id"] for t in tables)))
 
+    # -- table display names ------------------------------------------------
+    wanted_names = {t["key"]: t["name"] for t in ts.schema()}
+    for table, key in zip(tables, current):
+        target_name = wanted_names.get(key)
+        if not target_name or table["name"] == target_name:
+            continue
+        if dry_run:
+            print(f"  [dry] ~ таблица '{table['name']}' -> '{target_name}'")
+        else:
+            tb.rename_table(base_id, table["id"], target_name)
+            print(f"  ~ таблица переименована: '{table['name']}' -> '{target_name}'")
+        moved += 1
+    wanted = [k for k in ts.table_keys() if k in by_key]
+    # Anything we do not manage keeps its relative order, at the end.
+    target = wanted + [k for k in current if k not in wanted]
+    if current != target:
+        if dry_run:
+            print(f"  [dry] ~ порядок таблиц -> {' · '.join(target)}")
+            moved += 1
+        else:
+            for i in range(1, len(target)):
+                tb.move_table(base_id, by_key[target[i]], by_key[target[i - 1]])
+            print(f"  ~ порядок таблиц выровнен: {' · '.join(target)}")
+            moved += 1
 
-def f(name, spec):
-    return {"name": name, **spec}
+    # Views: the managed tabs follow the order they are declared in, right after
+    # whatever views already existed (Teable's own default "Grid view").
+    view_defs = ts.views()
+    for table_key, defs in view_defs.items():
+        table_id = by_key.get(table_key)
+        if not table_id:
+            continue
+        views = tb.views(table_id)
+        names = [v["name"] for v in views]
+        ids = dict(zip(names, (v["id"] for v in views)))
+        managed = [d["name"] for d in defs if d["name"] in ids]
+        target_v = [n for n in names if n not in managed] + managed
+        if names == target_v:
+            continue
+        if dry_run:
+            print(f"  [dry] ~ порядок вкладок {table_key} -> {' · '.join(target_v)}")
+        else:
+            for i in range(1, len(target_v)):
+                tb.move_view(table_id, ids[target_v[i]], ids[target_v[i - 1]])
+            print(f"  ~ порядок вкладок {table_key} выровнен")
+        moved += 1
 
+    # -- symmetric link fields ---------------------------------------------
+    # Teable auto-creates a back-link field on the far side of every link and
+    # names it after the linked table as it was named back then. A base that was
+    # upgraded therefore keeps the old title (e.g. "Predictions — Прогнозы DT"),
+    # so the fields are renamed to whatever the linked table is called now.
+    table_titles = {t["id"]: t["name"] for t in tb.tables(base_id)}
+    for table in ts.schema():
+        table_id = by_key.get(table["key"])
+        if not table_id:
+            continue
+        declared = {f["name"] for f in table["fields"]}
+        for field in tb.fields(table_id):
+            if field["type"] != "link" or field["name"] in declared:
+                continue
+            target = table_titles.get((field.get("options") or {}).get("foreignTableId"))
+            if not target or field["name"] == target:
+                continue
+            if dry_run:
+                print(f"  [dry] ~ поле-обратная связь '{field['name']}' -> '{target}'")
+            else:
+                tb.rename_field(table_id, field["id"], target)
+                print(f"  ~ поле-обратная связь: '{field['name']}' -> '{target}'")
+            moved += 1
 
-def build(session, url, base_id):
-    def create_table(body):
-        r = session.post(f"{url}/api/base/{base_id}/table", json=body, timeout=60)
-        r.raise_for_status()
-        j = r.json()
-        print(f"  + {j['name']}  ({j['id']}, {len(j['fields'])} fields)")
-        return j["id"]
+    # -- columns inside views ----------------------------------------------
+    # The full column state of every view is written explicitly, because Teable
+    # simply omits a field from columnMeta until something touches it — and an
+    # omitted field is visible. That is why a fresh base showed the back-link
+    # columns while an upgraded one hid them. Filters and sorts are never
+    # touched here; only column order and visibility.
+    curated = {(k, d["name"]): d["columns"] for k, defs in view_defs.items()
+               for d in defs if d.get("columns")}
+    for table in ts.schema():
+        table_id = by_key.get(table["key"])
+        if not table_id:
+            continue
+        schema_order = [f["name"] for f in table["fields"]]
+        declared = set(schema_order)
+        fields = tb.fields(table_id)
+        by_name = {f["name"]: f["id"] for f in fields}
+        by_id = {f["id"]: f for f in fields}
+        # Declared fields keep schema order; everything else (back-links, fields
+        # left over from an older schema) trails behind sorted by name — by name
+        # and not by creation order, so the tail is identical in a base built
+        # from scratch and in one grown field by field.
+        schema_ids = sorted(
+            (f["id"] for f in fields),
+            key=lambda fid: (0, schema_order.index(by_id[fid]["name"]), "")
+            if by_id[fid]["name"] in declared else (1, 0, by_id[fid]["name"]))
 
-    print("Building tables...")
-    runs = create_table({"name": "Runs — Прогоны анализа", "fields": [
-        f("Run ID", txt()), f("Дата прогона", date(True)), f("Входной файл", txt()),
-        f("Пациентов всего", num(0)), f("С исходом", num(0)),
-        f("Положительных исходов", num(0)), f("Версия DT", txt()), f("Заметки", longtxt())]})
+        for view in tb.views(table_id):
+            meta = view.get("columnMeta") or {}
+            columns = curated.get((table["key"], view["name"]))
+            if columns:
+                # A curated tab pins its own visible set and order; the rest of
+                # the fields trail behind it hidden, in schema order.
+                head = [by_name[n] for n in columns if n in by_name]
+                order_ids = head + [fid for fid in schema_ids if fid not in head]
+                visible = set(head)
+                state = [(fid, fid not in visible) for fid in order_ids]
+            else:
+                # Everything else (Teable's default "Grid view" included): schema
+                # order, back-link columns hidden, the owner's own hide/show of
+                # real fields preserved.
+                state = [(fid, (by_id[fid]["name"] not in declared)
+                          or bool(meta.get(fid, {}).get("hidden")))
+                         for fid in schema_ids]
 
-    cyc = create_table({"name": "Cycles — Пациентки / циклы", "fields": [
-        f("ID пациента", txt()), f("Имя", txt()), f("Возраст", num(0)), f("AMH", num(2)),
-        f("AFC", num(0)), f("BMI", num(1)), f("Попытка", num(0)),
-        f("Дата OPU", date()), f("Дата ET", date()), f("N фолликулов", num(0)),
-        f("OCC", num(0)), f("MII", num(0)), f("Инсеминировано", num(0)), f("2pN", num(0)),
-        f("Cleavage", num(0)), f("Bl", num(0)), f("Good Bl", num(0)), f("Cryo", num(0)),
-        f("ET", num(0)), f("День ET", num(0)),
-        f("Исход", sel([{"name": "Беременность", "color": "greenLight1"},
-                        {"name": "Нет", "color": "redLight1"},
-                        {"name": "Неизвестно", "color": "grayLight1"}])),
-        f("Кластер", sel([{"name": "C0 Standard", "color": "blueLight1"},
-                          {"name": "C1 Poor", "color": "redLight1"},
-                          {"name": "C2 High", "color": "greenLight1"}]))]})
+            actual = [(fid, bool(meta[fid].get("hidden")))
+                      for fid in sorted(meta, key=lambda f: meta[f].get("order", 0))
+                      if fid in by_id]
+            if actual == state:
+                continue
+            entries = [{"fieldId": fid,
+                        "columnMeta": {"order": i, **({"hidden": True} if hid else {})}}
+                       for i, (fid, hid) in enumerate(state)]
+            if dry_run:
+                print(f"  [dry] ~ колонки {table['key']} :: {view['name']}")
+            else:
+                try:
+                    tb.set_column_meta(table_id, view["id"], entries)
+                except Exception as exc:  # noqa: BLE001 - cosmetic, never fatal
+                    print(f"  [!] колонки {table['key']} :: {view['name']}: {exc}")
+                    continue
+                print(f"  ~ колонки выровнены: {table['key']} :: {view['name']}")
+            moved += 1
 
-    def link(tid):
-        return {"type": "link", "options": {"relationship": "manyOne", "foreignTableId": tid}}
-
-    create_table({"name": "Predictions — Прогнозы DT", "fields": [
-        f("Ключ", txt()), f("Пациентка", link(cyc)), f("Прогон", link(runs)),
-        f("med OCC", num(1)), f("med MII", num(1)), f("med 2PN", num(1)),
-        f("med Bl", num(1)), f("med Good", num(1)), f("P per transfer", num(3)),
-        f("P overall cycle", num(3)), f("Bayes mean", num(3)), f("KAT", num(3)),
-        f("NVSA", num(3)), f("CSDI", num(3)), f("DIGITAL TWIN", num(3)),
-        f("OHSS risk", num(3)), f("P cancel", num(3)), f("Banking", txt()),
-        f("Timestamp", date(True))]})
-
-    create_table({"name": "Prediction vs Reality — Прогноз vs Факт", "fields": [
-        f("Ключ", txt()), f("Пациентка", link(cyc)), f("Прогон", link(runs)),
-        f("OCC факт", num(0)), f("OCC прогноз", num(1)), f("OCC ±30%", sel(FLAG)),
-        f("Bl факт", num(0)), f("Bl прогноз", num(1)), f("Bl ±30%", sel(FLAG)),
-        f("Good Bl факт", num(0)), f("Good Bl прогноз", num(1)), f("Good ±30%", sel(FLAG)),
-        f("KAT−PRAI (пп)", num(1)),
-        f("Приоритет ревью", sel([{"name": "1 Критично", "color": "redLight1"},
-                                  {"name": "2 Рекомендовано", "color": "yellowLight1"},
-                                  {"name": "3 В норме", "color": "greenLight1"}])),
-        f("Основание", longtxt())]})
-
-    create_table({"name": "Calibration — Калибровка моделей", "fields": [
-        f("Ключ", txt()), f("Прогон", link(runs)),
-        f("Модель", sel([{"name": m} for m in
-                         ["MC", "Bayes", "KAT", "NVSA", "CSDI", "DT", "PRAI"]])),
-        f("Brier", num(4)), f("AUC-ROC", num(4)), f("Acc@0.5", num(4)),
-        f("Mean pred", num(4)), f("Real rate", num(4)), f("N", num(0))]})
-
-    create_table({"name": "Files — Файлы прогонов", "fields": [
-        f("Имя файла", txt()),
-        f("Тип", sel([{"name": "dt_predictions", "color": "blueLight1"},
-                      {"name": "OPU_table", "color": "greenLight1"},
-                      {"name": "dt_vs_real", "color": "yellowLight1"},
-                      {"name": "DT_Analytics_Report", "color": "purpleLight1"},
-                      {"name": "input_report", "color": "grayLight1"},
-                      {"name": "other", "color": "grayLight1"}])),
-        {"name": "Файл", "type": "attachment"}, f("Прогон", link(runs)),
-        f("Размер, КБ", num(1)), f("Строк", num(0)), f("Путь (локальный)", txt()),
-        f("SHA-256", txt()), f("Загружено", date(True))]})
-
-    print(f"\nDone. Base {base_id} now has the full IVF Digital Twin schema.")
+    return moved
 
 
 def main():
-    global TZ
     ap = argparse.ArgumentParser()
-    here = os.path.dirname(os.path.abspath(__file__))
-    ap.add_argument("--config", default=os.path.join(here, "teable_config.json"))
-    ap.add_argument("--token")
-    ap.add_argument("--url", default="https://app.teable.ai")
-    ap.add_argument("--space", help="space id — create a new base inside it")
-    ap.add_argument("--name", default="IVF — Digital Twin", help="name for the new base")
-    ap.add_argument("--base", help="existing (empty) base id to fill instead")
-    ap.add_argument("--tz", default=TZ)
+    ap.add_argument("--config", default=tc.DEFAULT_CONFIG)
+    ap.add_argument("--clinic", help="clinic code from the registry (default: --all)")
+    ap.add_argument("--all", action="store_true", help="every clinic in the registry")
+    ap.add_argument("--space", help="space id for newly created bases "
+                                    "(default: config['space_id'])")
+    ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    TZ = args.tz
 
-    token = args.token
-    url = args.url
-    if not token and os.path.exists(args.config):
-        with open(args.config, encoding="utf-8") as fh:
-            cfg = json.load(fh)
-        token = cfg.get("token")
-        url = cfg.get("teable_url", url)
-    if not token:
-        sys.exit("No token. Pass --token or set it in teable_config.json.")
+    if not args.clinic and not args.all:
+        sys.exit("Pass --clinic <code> or --all.")
 
-    s = requests.Session()
-    s.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/json"})
+    cfg = tc.load_config(args.config)
+    tb = tc.connect(cfg, dry_run=args.dry_run)
+    space_id = args.space or cfg.get("space_id")
 
-    base_id = args.base
-    if not base_id:
-        if not args.space:
-            sys.exit("Pass --base <id> or --space <id> to create a new base.")
-        r = s.post(f"{url}/api/base", json={"spaceId": args.space, "name": args.name}, timeout=60)
-        r.raise_for_status()
-        base_id = r.json()["id"]
-        print(f"Created base '{args.name}' -> {base_id}")
+    for clinic in tc.clinics(cfg, args.clinic):
+        print(f"\n=== {clinic.name} ({clinic.code}) ===")
+        base_id = clinic.base_id
+        if not base_id:
+            if not space_id:
+                sys.exit("No base_id for this clinic and no space_id in the config "
+                         "— pass --space <id>.")
+            title = f"{clinic.name} — Digital Twin"
+            if args.dry_run:
+                print(f"  [dry] create base '{title}' in {space_id}")
+                base_id = "DRYRUN"
+            else:
+                base_id = tb.create_base(space_id, title)
+                tc.save_base_id(cfg, clinic.code, base_id)
+                print(f"  created base '{title}' -> {base_id} (written to config)")
+        else:
+            print(f"  base {base_id} — upgrading in place")
 
-    build(s, url, base_id)
-    print(f"\nSet base_id={base_id} in a copy of teable_config.json for this clinic.")
+        if base_id == "DRYRUN":
+            print("  [dry] full schema would be created")
+            continue
+        stats = apply_schema(tb, base_id, clinic.timezone, dry_run=args.dry_run)
+        n_views = apply_views(tb, base_id, dry_run=args.dry_run)
+        n_order = apply_layout(tb, base_id, dry_run=args.dry_run)
+        if not stats["tables"] and not stats["fields"] and not n_views and not n_order:
+            print("  schema already up to date")
+        else:
+            print(f"  applied: +{stats['tables']} tables, +{stats['fields']} fields, "
+                  f"+{n_views} views, {n_order} reorders")
+
+    print("\nDone.")
 
 
 if __name__ == "__main__":

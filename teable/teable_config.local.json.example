@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "Копия этого файла с именем teable_config.local.json — рабочий конфиг (в .gitignore).",
+    "Токен: Teable -> аватар -> Настройки -> Personal access tokens. Права: table|read,",
+    "table|create, field|read, field|create, record|read, record|create, record|update,",
+    "base|read, base|create (последнее нужно только для заведения новой клиники).",
+    "processed_dir можно задавать относительно корня репозитория — так конфиг переживает",
+    "переезд проекта. base_id оставьте пустым: teable_bootstrap.py создаст базу и впишет id сюда сам."
+  ],
+  "teable_url": "http://127.0.0.1:3000",
+  "token": "ВСТАВЬТЕ_ЛОКАЛЬНЫЙ_ТОКЕН",
+  "space_id": "spcXXXXXXXXXXXXXXXX",
+  "cards_url": "http://127.0.0.1:8788",
+  "cards_dir": "data/processed/_viewer",
+  "dt_version": "v7.0",
+  "timezone": "Asia/Tashkent",
+  "upload_files": true,
+  "clinics": [
+    {
+      "code": "two_line",
+      "name": "Two-Line IVF",
+      "base_id": "",
+      "processed_dir": "data/processed",
+      "timezone": "Asia/Tashkent"
+    },
+    {
+      "code": "fertimed",
+      "name": "Fertimed",
+      "base_id": "",
+      "processed_dir": "data/processed/fertimed",
+      "timezone": "Asia/Tashkent"
+    },
+    {
+      "code": "ggrc",
+      "name": "GGRC",
+      "base_id": "",
+      "processed_dir": "data/processed/ggrc",
+      "timezone": "Asia/Yerevan"
+    },
+    {
+      "code": "skyfert",
+      "name": "Skyfert",
+      "base_id": "",
+      "processed_dir": "data/processed/skyfert",
+      "timezone": "Asia/Tashkent"
+    }
+  ]
+}

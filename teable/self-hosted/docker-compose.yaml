@@ -22,6 +22,21 @@ services:
       teable-cache:
         condition: service_healthy
 
+  # Serves the per-cycle patient cards built by teable/cards_build.py. The pages
+  # carry ФИО, so the port is bound to the loopback interface only — unlike
+  # Teable's own 3000, this must never be reachable from the network.
+  cards:
+    image: nginx:1.27-alpine
+    restart: always
+    ports:
+      - '127.0.0.1:8788:80'
+    volumes:
+      - ../../data/processed/_viewer:/usr/share/nginx/html:ro
+    environment:
+      - TZ=${TIMEZONE}
+    networks:
+      - teable-standalone
+
   teable-db:
     image: postgres:15.4
     restart: always
