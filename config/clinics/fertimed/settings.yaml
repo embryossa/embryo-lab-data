@@ -112,12 +112,21 @@ analytics:
   datalore_notebook_reference: "notebooks/reference/Data_Twin_analytics.ipynb"
   primary_prob_col: ["DIGITAL TWIN", "bayes_mean", "p_per_transfer"]
 
-# Подмена канонического "mii" значением из mii_ml_fallback ТОЛЬКО при
-# построении входа для DT/TabPFN (scripts/run_analysis.py) — лабораторный
-# KPI считается по настоящему mii и это не затрагивает. См.
-# src/embryo/clinics/fertimed.py:MII_ML_FALLBACK_COLUMN.
+# Подмена канонических "mii"/"occ"/"follicles" значениями из *_ml_fallback
+# ТОЛЬКО при построении входа для DT/TabPFN/DNN/TabPFN-3 (scripts/run_analysis.py)
+# — лабораторный KPI и OZEMA считаются по фактически измеренному и это их не
+# затрагивает. Цепочка: MII<-инсеминированные (только ЭКО), OCC<-MII,
+# фолликулы<-OCC. Выгрузка 1С не заполняет ОКК и фолликулы у большей части
+# циклов, из-за чего DNN отбрасывала строки (в 18 признаках обучения не
+# допускается ни одного пропуска), а DT/TabPFN теряли сигнал.
+# ВАЖНО: в Vienna KPI эти значения подставлять нельзя — OCCR=OCC/фолликулы и
+# MIIR=MII/OCC с производным знаменателем вырождаются ровно в 1.0.
+# См. src/embryo/clinics/fertimed.py:*_ML_FALLBACK_COLUMN.
 quirks:
-  mii_model_fallback_column: "mii_ml_fallback"
+  model_fallback_columns:
+    mii: "mii_ml_fallback"
+    occ: "occ_ml_fallback"
+    follicles: "follicles_ml_fallback"
 
 # Тот же контракт признаков DT, что и у клиники A — все поля выводимы из
 # канонической формы Fertimed тоже. Подтвердить отдельно, когда/если для

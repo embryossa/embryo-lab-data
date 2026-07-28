@@ -25,6 +25,8 @@ from .. import ingest, normalize
 # "mii" при построении входа для DT/TabPFN (и только для него — лабораторный
 # KPI MIIR всегда считается по настоящему "mii", см. docs/FERTIMED.md).
 MII_ML_FALLBACK_COLUMN = "mii_ml_fallback"
+OCC_ML_FALLBACK_COLUMN = "occ_ml_fallback"
+FOLLICLES_ML_FALLBACK_COLUMN = "follicles_ml_fallback"
 
 # Владелец подтвердил (2026-07-18): для анализа берём только эти значения
 # "Лечение"; пустые строки, "Только пункция", "Инсеминация" (ВМИ — другая
@@ -78,12 +80,6 @@ def _fertilization_method(df: pd.DataFrame) -> pd.Series:
     return method
 
 
-def _follicles_fallback(df: pd.DataFrame) -> pd.Series:
-    follicles = pd.to_numeric(df["follicles"], errors="coerce")
-    occ = pd.to_numeric(df["occ"], errors="coerce")
-    return follicles.where(follicles.notna(), occ)
-
-
 def _mii_ml_fallback(df: pd.DataFrame) -> pd.Series:
     """Только для входа нейросетей: ЭКО-циклы без известного MII получают
     MII=Число инсеминированных, чтобы не выпасть из прогноза. Лабораторный
@@ -92,6 +88,27 @@ def _mii_ml_fallback(df: pd.DataFrame) -> pd.Series:
     inseminated = pd.to_numeric(df.get("inseminated"), errors="coerce")
     is_ivf = df["fertilization_method"].eq("IVF") if "fertilization_method" in df.columns else pd.Series(False, index=df.index)
     return mii.where(mii.notna() | ~is_ivf, inseminated)
+
+
+def _occ_ml_fallback(df: pd.DataFrame) -> pd.Series:
+    """Только для входа нейросетей: неизвестное число ОКК получает модельный MII
+    (звено цепочки MII->OCC->фолликулы). Лабораторные OCCR/MIIR/3pNR эту колонку
+    НЕ используют — они считаются по настоящему "occ", иначе MIIR=MII/OCC
+    вырождается ровно в 1.0 на каждой подставленной строке."""
+    occ = pd.to_numeric(df.get("occ"), errors="coerce")
+    mii_model = pd.to_numeric(df.get(MII_ML_FALLBACK_COLUMN), errors="coerce")
+    return occ.where(occ.notna(), mii_model)
+
+
+def _follicles_ml_fallback(df: pd.DataFrame) -> pd.Series:
+    """Только для входа нейросетей: неизвестное число фолликулов получает
+    модельный ОКК. Раньше эта подстановка (_follicles_fallback) применялась к
+    основному df и попадала в лабораторный KPI, где OCCR=OCC/фолликулы с
+    производным знаменателем давал ровно 1.0 — тот же дефект, что с производной
+    колонкой фолликулов в GGRC."""
+    follicles = pd.to_numeric(df.get("follicles"), errors="coerce")
+    occ_model = pd.to_numeric(df.get(OCC_ML_FALLBACK_COLUMN), errors="coerce")
+    return follicles.where(follicles.notna(), occ_model)
 
 
 def _frozen_sum(df: pd.DataFrame) -> pd.Series:
@@ -161,12 +178,17 @@ def prepare(raw: pd.DataFrame, columns_cfg: dict, settings_cfg: dict) -> tuple[p
     df["age"] = df["age"].apply(_parse_age)
     df["attempt_no"] = _fillna_default(df["attempt_no"], 1)
     df["transfer_day"] = _fillna_default(df["transfer_day"], 5)
-    df["follicles"] = _follicles_fallback(df)
     df["fertilization_method"] = _fertilization_method(df)
     df["frozen"] = _frozen_sum(df)
     df["embryologist"] = _priority_fill(df, ["embryologist_fert", "embryologist_opu", "embryologist_et"])
     df["doctor"] = _priority_fill(df, ["doctor_opu", "doctor_et"])
+    # Цепочка MII->OCC->фолликулы живёт ОТДЕЛЬНЫМИ колонками и подставляется в
+    # канонические поля только при сборке model_input (scripts/run_analysis.py,
+    # quirks.model_fallback_columns). Сами "mii"/"occ"/"follicles" остаются
+    # сырыми, чтобы Vienna KPI и OZEMA считались по фактически измеренному.
     df[MII_ML_FALLBACK_COLUMN] = _mii_ml_fallback(df)
+    df[OCC_ML_FALLBACK_COLUMN] = _occ_ml_fallback(df)
+    df[FOLLICLES_ML_FALLBACK_COLUMN] = _follicles_ml_fallback(df)
 
     df = df.loc[_cohort_mask(df)].reset_index(drop=True)
     if df.empty:

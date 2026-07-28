@@ -209,6 +209,42 @@ def _eligible_cycles(normalized: pd.DataFrame) -> pd.DataFrame:
     return computed
 
 
+def _model_fallback_map(cfg: dict) -> dict:
+    """canonical column -> column holding its model-only substitute."""
+    quirks = cfg.get("quirks", {}) or {}
+    mapping = dict(quirks.get("model_fallback_columns") or {})
+    legacy = quirks.get("mii_model_fallback_column")
+    if legacy and "mii" not in mapping:
+        mapping["mii"] = legacy
+    return mapping
+
+
+def _apply_model_fallbacks(normalized: pd.DataFrame, mapping: dict) -> tuple[pd.DataFrame, dict]:
+    """Substitute the model-only values into the canonical columns.
+
+    Applied to the pre-KPI frame on purpose: everything derived from these
+    columns (OCCR/MIIR/3pNR, the Russian DT feature names, Model_KPIScore) is
+    then recomputed from the substituted values, so the model cohort stays
+    internally consistent instead of mixing filled counts with rates computed
+    off the true ones.  The laboratory cohort never sees this frame.
+    """
+    applied: dict = {}
+    if not mapping:
+        return normalized, applied
+    out = normalized.copy()
+    for canon, source in mapping.items():
+        if canon not in out.columns or source not in out.columns:
+            continue
+        target = pd.to_numeric(out[canon], errors="coerce")
+        fallback = pd.to_numeric(out[source], errors="coerce")
+        filled = target.isna() & fallback.notna()
+        if not bool(filled.any()):
+            continue
+        out[canon] = target.where(target.notna(), fallback)
+        applied[canon] = int(filled.sum())
+    return out, applied
+
+
 def _prepare_opu(cfg: dict, input_path: Path, columns_cfg: dict, clinic: str | None = None) -> pd.DataFrame:
     configured = _project_path(cfg["paths"]["opu_table"])
     source = configured if configured.is_file() else input_path
@@ -495,19 +531,30 @@ def main(argv: list[str] | None = None) -> int:
     _io.atomic_write_csv(ozema_cycles, processed / "ozema_cycles.csv")
     _io.atomic_write_csv(ozema_candidates, processed / "ozema_genetic_counseling_candidates.csv")
 
-    # Клиника B (и любая другая с quirks.mii_model_fallback_column): вход DT/TabPFN
-    # получает MII=Число инсеминированных для ЭКО-циклов без известного MII (чтобы
-    # нейросети не теряли эти циклы), но только для model_input — kpi_computed.csv/
-    # OPU_table_enriched.xlsx и лабораторный MIIR продолжают использовать настоящий
-    # "mii" (df kpi_cycles не трогается). См. src/embryo/clinics/fertimed.py.
-    model_source = kpi_cycles
-    mii_fallback_col = cfg.get("quirks", {}).get("mii_model_fallback_column")
-    if mii_fallback_col and mii_fallback_col in kpi_cycles.columns:
-        model_source = kpi_cycles.copy()
-        fallback = model_source[mii_fallback_col]
-        model_source["mii"] = model_source["mii"].where(model_source["mii"].notna(), fallback)
-        if "MII" in model_source.columns:
-            model_source["MII"] = model_source["MII"].where(model_source["MII"].notna(), fallback)
+    # Клиника B (и любая другая с quirks.model_fallback_columns): вход DT/TabPFN/
+    # DNN/TabPFN-3 получает заполненную цепочку MII->OCC->фолликулы, чтобы
+    # нейросети не теряли циклы с неполной выгрузкой. Это ТОЛЬКО model_input:
+    # kpi_computed.csv / OPU_table_enriched.xlsx, лабораторные OCCR/MIIR/3pNR и
+    # OZEMA продолжают считаться по фактически измеренному (df kpi_cycles не
+    # трогается). Подставлять производные значения в знаменатель Vienna KPI
+    # нельзя: OCCR=OCC/фолликулы и MIIR=MII/OCC вырождаются ровно в 1.0.
+    # См. src/embryo/clinics/fertimed.py.
+    fallback_map = _model_fallback_map(cfg)
+    model_normalized, model_fallbacks = _apply_model_fallbacks(normalized, fallback_map)
+    if model_fallbacks:
+        model_source = _eligible_cycles(model_normalized)
+        model_source = _add_opu_aliases(model_source, clinic=args.clinic)
+        if args.clinic == "skyfert":
+            model_source["Patient Full Name"] = model_source["patient_id"]
+        model_source = privacy.add_cycle_uid(model_source, "_key", secret)
+        # The substitutions touch no column the cohort filter reads, so the two
+        # cohorts must stay row-for-row identical; a drift here would silently
+        # mis-join model output back onto the laboratory cohort.
+        if list(model_source["cycle_uid"]) != list(kpi_cycles["cycle_uid"]):
+            raise ValueError("model-подстановки изменили состав когорты — join разъедется")
+        print(f"[model-input] подстановки только для моделей: {model_fallbacks}")
+    else:
+        model_source = kpi_cycles
     model_input = _add_dt_aliases(model_source)
     model_input_path = private / "model_input.xlsx"
     _io.atomic_write_excel({"model_input": model_input}, model_input_path)

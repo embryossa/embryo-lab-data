@@ -91,10 +91,28 @@ def test_cohort_filter_drops_only_puncture_iui_and_missing_transfer_fields():
     assert "CASE-CRYO-OK" in kept                  # криоперенос с данными — валиден
 
 
-def test_follicles_fallback_from_occ_when_missing():
+def test_follicles_fallback_is_model_only_and_leaves_raw_follicles_missing():
+    """Подстановка фолликулы<-ОКК больше НЕ идёт в канонический "follicles":
+    иначе OCCR=OCC/фолликулы считался бы по производному знаменателю и давал
+    ровно 1.0. Значение живёт отдельной колонкой и подставляется только в
+    model_input (scripts/run_analysis.py)."""
     df = _prepared()
     row = df.loc["CASE-FOLLICLES-FALLBACK"]
-    assert row["follicles"] == row["occ"] == 5
+    assert pd.isna(row["follicles"])                                    # сырое остаётся пропуском
+    assert row["occ"] == 5
+    assert row[fertimed.FOLLICLES_ML_FALLBACK_COLUMN] == 5              # вход модели -> ОКК
+
+
+def test_occ_fallback_is_model_only_and_chains_into_follicles():
+    """Цепочка MII->OCC->фолликулы: ЭКО-цикл без ОКК и без фолликулов получает
+    для моделей ОКК=модельный MII, а фолликулы=этот же ОКК. Лабораторные
+    "occ"/"follicles" при этом остаются пропусками."""
+    df = _prepared()
+    row = df.loc["CASE-IVF-MII-FALLBACK"]
+    if pd.isna(row["occ"]):
+        assert row[fertimed.OCC_ML_FALLBACK_COLUMN] == row[fertimed.MII_ML_FALLBACK_COLUMN]
+        if pd.isna(row["follicles"]):
+            assert row[fertimed.FOLLICLES_ML_FALLBACK_COLUMN] == row[fertimed.OCC_ML_FALLBACK_COLUMN]
 
 
 def test_mii_ml_fallback_only_for_ivf_rows_not_icsi():
