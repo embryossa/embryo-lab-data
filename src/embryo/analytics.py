@@ -9,7 +9,6 @@ Excel report is atomically replaced after a complete successful write.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 import pandas as pd

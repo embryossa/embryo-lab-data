@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from embryo.analytics import auto_interpret, conversion_rates, run_analytics
+from embryo.analytics import conversion_rates, run_analytics
 from embryo.kpi import (DOCTOR_METRICS, EMBRYOLOGIST_METRICS, aggregate_kpis, competency_exclusion_mask,
                         funnel_exclusion_mask,
                         compute_kpi, compute_rates, surgical_sperm_mask)

@@ -115,9 +115,9 @@ def _print_data_quality_flags(dt: pd.DataFrame) -> None:
         return d[pred].corr(d[actual]) if len(d) > 5 else float("nan")
 
     print("\n=== Data-quality flags (Digital Twin med_* fields, run 2026-07-19) ===")
-    print(f"- dt_mii_pred (med_mii): pass-through of known_mii input in every row "
-          f"(MAE=0, r=1.00 vs the FR-fallback MII column) — NOT a genuine forecast, "
-          f"exclude from any MII predictive-accuracy comparison.")
+    print("- dt_mii_pred (med_mii): pass-through of known_mii input in every row "
+          "(MAE=0, r=1.00 vs the FR-fallback MII column) — NOT a genuine forecast, "
+          "exclude from any MII predictive-accuracy comparison.")
     print(f"- dt_bl_pred (med_blasts): r={corr('med_blasts', 'Bl'):.3f} vs actual Bl — "
           f"near zero, systematic +bias — verify before quoting as a working forecast.")
     print(f"- dt_good_bl_pred (med_good): r={corr('med_good', 'Good Bl'):.3f} vs actual Good Bl — "

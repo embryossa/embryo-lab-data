@@ -141,8 +141,7 @@ print('\n[Part A tables saved]')
 # PART B — PREGNANCY CLASSIFICATION
 # =====================================================================
 from sklearn.metrics import (roc_auc_score, average_precision_score, brier_score_loss,
-                             matthews_corrcoef, f1_score, roc_curve, precision_recall_curve,
-                             confusion_matrix, balanced_accuracy_score, log_loss)
+                             matthews_corrcoef, f1_score, roc_curve, confusion_matrix, balanced_accuracy_score, log_loss)
 
 print('\n' + '#' * 86)
 print('# PART B. PREGNANCY CLASSIFICATION  (ground truth Preg, n=489, positives=142, prev=29.0%)')
@@ -170,8 +169,8 @@ def delong_var(y_true, prob):
     auc = (tz[:m].sum() - m * (m + 1) / 2) / (m * n)
     v01 = (tz[:m] - tx) / n
     v10 = 1 - (tz[m:] - ty) / m
-    s01 = np.var(v01, ddof=1) / m
-    s10 = np.var(v10, ddof=1) / n
+    # Дисперсии компонент здесь не считаются: delong_test ниже вычисляет их сам
+    # из возвращаемых v01/v10 (нужны ещё и ковариации между двумя моделями).
     return auc, v01, v10, m, n
 
 def delong_test(y_true, p1, p2):
@@ -195,7 +194,6 @@ def auc_ci(y_true, prob, Bn=2000):
 
 def cal_slope_intercept(y_true, prob):
     eps = 1e-6; lp = np.log(np.clip(prob, eps, 1 - eps) / (1 - np.clip(prob, eps, 1 - eps)))
-    import numpy as _np
     X = np.column_stack([np.ones_like(lp), lp])
     # newton IRLS logistic
     b = np.zeros(2)

@@ -1144,7 +1144,7 @@ def _intra_inter_stats_chart(stats: dict | None) -> str:
     if not _HAVE_PLOTLY or stats is None:
         return ""
     intra_arr, inter_arr = stats["intra"], stats["inter"]
-    n1, n2, u_stat, p_value = stats["n1"], stats["n2"], stats["U"], stats["p"]
+    n1, n2, p_value = stats["n1"], stats["n2"], stats["p"]
     r_rb = stats["r_rb"]
     intra_ci_lo, intra_ci_hi = stats["intra_ci"]
     inter_ci_lo, inter_ci_hi = stats["inter_ci"]
