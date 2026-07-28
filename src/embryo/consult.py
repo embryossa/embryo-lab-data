@@ -36,17 +36,36 @@ def build_flags(row: dict, primary_prob=("DIGITAL TWIN", "bayes_mean", "p_per_tr
         f["prognosis_level"] = ("favorable" if pp >= 55 else "good" if pp >= 40
                                 else "moderate" if pp >= 25 else "low")
 
-    lo, hi = _g(row, "bayes_ci_low", "ci_kat_low"), _g(row, "bayes_ci_high", "ci_kat_high")
-    if lo is not None and hi is not None:
-        w = round((hi - lo) * 100, 1)
-        f["CI_width_pp"] = w
+    # [FIX ci] Ширину ДИ пайплайн уже посчитал и положил в `ci_width_pp`, но
+    # искали её только под именами bayes_ci_low/ci_kat_low, которых в join-фрейме
+    # нет. Из-за этого CI_category не вычислялась НИКОГДА. Теперь сначала берём
+    # готовое поле, и только если его нет — выводим из границ.
+    w = _g(row, "ci_width_pp")
+    if w is None:
+        lo = _g(row, "bayes_ci_low", "ci_kat_low", "ci_low")
+        hi = _g(row, "bayes_ci_high", "ci_kat_high", "ci_high")
+        if lo is not None and hi is not None:
+            w = round((hi - lo) * 100, 1)
+    # Ширина ДИ ровно 0 — вырожденное значение: так выглядит НЕпосчитанный
+    # интервал, а не бесконечно точный прогноз. Трактовать её как «низкую
+    # статистическую неопределённость» значит выдать отсутствие данных за
+    # высокую точность (в когорте ggrc это все 225 циклов).
+    if w is not None and w > 0:
+        f["CI_width_pp"] = round(float(w), 1)
         f["CI_category"] = ("low_statistical_uncertainty" if w < 15
                             else "moderate_statistical_uncertainty" if w < 30
                             else "high_statistical_uncertainty")
+    elif w == 0:
+        f["CI_width_pp"] = 0.0
+        f["CI_note"] = "ДИ не рассчитан (нулевая ширина) — как сигнал не используется"
 
+    # [FIX spread] PRAI — второй независимый оценщик, присутствующий у каждого
+    # цикла, но его не было в списке. В реальных когортах из семи перечисленных
+    # колонок заполнена ровно одна («DIGITAL TWIN»), поэтому len(mp) никогда не
+    # достигал 2 и agreement_category тоже не вычислялась.
     mp = [v for v in (_g(row, "p_per_transfer"), _g(row, "bayes_mean"), _g(row, "p_kat_raw"),
                       _g(row, "p_nvsa"), _g(row, "p_csdi"), _g(row, "p_gnn_ens"),
-                      _g(row, "DIGITAL TWIN")) if v is not None]
+                      _g(row, "DIGITAL TWIN"), _g(row, "PRAI")) if v is not None]
     if len(mp) >= 2:
         sp = round((max(mp) - min(mp)) * 100, 1)
         f["ensemble_spread_pp"] = sp
@@ -54,13 +73,28 @@ def build_flags(row: dict, primary_prob=("DIGITAL TWIN", "bayes_mean", "p_per_tr
                                    else "moderate_model_agreement" if sp < 30
                                    else "high_model_disagreement")
 
+    # [FIX grade] Раньше при пустых ci_cat и agr обе строки были "", условие
+    # `"" != "high_..."` истинно, и КАЖДЫЙ цикл получал «B». На реальных
+    # когортах это давало 467 «B» из 467 — константу, которую нарратор
+    # объяснял врачу как результат оценки надёжности.
     ci_cat, agr = f.get("CI_category", ""), f.get("agreement_category", "")
-    if ci_cat == "low_statistical_uncertainty" and agr == "high_model_agreement":
+    if not ci_cat and not agr:
+        f["confidence_grade"] = "insufficient_evidence"
+        f["confidence_grade_reason"] = "no_uncertainty_signal"
+    elif ci_cat == "low_statistical_uncertainty" and agr == "high_model_agreement":
         f["confidence_grade"] = "A"
+        f["confidence_grade_reason"] = "narrow_CI_and_model_agreement"
     elif ci_cat != "high_statistical_uncertainty" and agr != "high_model_disagreement":
         f["confidence_grade"] = "B"
+        f["confidence_grade_reason"] = (
+            "moderate_CI" if ci_cat == "moderate_statistical_uncertainty" else
+            "moderate_model_agreement" if agr == "moderate_model_agreement" else
+            "partial_signal")
     else:
         f["confidence_grade"] = "C"
+        f["confidence_grade_reason"] = (
+            "wide_CI" if ci_cat == "high_statistical_uncertainty"
+            else "model_disagreement")
 
     p_sev, p_mod = _g(row, "ohss_severe"), _g(row, "ohss_moderate")
     if p_sev is not None and p_sev >= 0.10:
