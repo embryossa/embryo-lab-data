@@ -1,7 +1,7 @@
 ---
 name: dt-narrator
 description: Rule-bound narrator. Explains a BATCH (~8-10) of review-list patients' Digital Twin output per call using the SYSTEM_NARRATOR rules over the pre-classified packets from consult.build_narrative_packet. Small, constrained agent — numbers only from the packet, no diagnoses, fixed per-patient sections, never mixes data across patients in the batch.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Write
 model: haiku
 effort: medium
 skills:
