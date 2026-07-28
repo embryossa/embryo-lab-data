@@ -218,8 +218,12 @@ def wilson_interval(numerator: float, denominator: float,
     """Two-sided Wilson score interval for a binomial proportion."""
     if not np.isfinite(denominator) or denominator <= 0 or not np.isfinite(numerator):
         return np.nan, np.nan
-    # Counts outside [0, n] indicate an upstream data inconsistency.  Keep the
-    # observed rate in the table but do not pretend a binomial CI is valid.
+    # numerator > denominator is NOT bad data (owner, 2026-07-29): ClR>100% means the
+    # fertilisation check missed the pronuclei window on zygotes that went on to
+    # cleave, and MII>OCC means warmed (vitrified) oocytes joined the programme after
+    # the fresh retrieval.  Both are real observations and stay in the table — only
+    # the binomial CI is undefined here, so it alone is suppressed.  See the
+    # vienna-kpi skill; do not relabel these rows as a counting/integrity problem.
     if numerator < 0 or numerator > denominator:
         return np.nan, np.nan
     p = numerator / denominator
