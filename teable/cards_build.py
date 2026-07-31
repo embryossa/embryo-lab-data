@@ -13,6 +13,17 @@ positioned against the rest of the clinic's cohort.
 If the clinic's Teable base is reachable, the per-cycle prediction history
 across previous runs is embedded too, so one cycle can be traced run to run.
 
+The page is ACCUMULATIVE, not a snapshot of the last run: `data/processed/
+<clinic>/` is a per-clinic folder, so every run overwrites `dt_predictions.csv`
+in it, and building only from that file made whole cohorts vanish from the
+viewer whenever a run covered a narrower slice (Fertimed, 31.07.2026: a June
+run of 34 cycles replaced the six-month 250, while the Teable base still held
+all 282). Cycles missing from the current run are therefore rebuilt from the
+base itself — `Cycles` + `Predictions` + `Regression QC` + `Review` + `OZEMA`
+together carry enough for a full card — and marked `archived` so a reconstructed
+card is never mistaken for a fresh one. Without a reachable base the page falls
+back to the current run alone, exactly as before.
+
 Privacy: the pages carry ФИО and are written under `data/processed/_viewer`,
 which lives inside the gitignored `data/processed` tree and is served only by
 the local nginx container on 127.0.0.1. They are the local layer — never an
@@ -186,10 +197,10 @@ def fetch_record_links(tb: tc.Teable, base_id: str, teable_url: str) -> dict:
 
 
 def build_payload(clinic: tc.Clinic, history: dict | None = None,
-                  record_links: dict | None = None) -> dict:
+                  record_links: dict | None = None, archive: dict | None = None) -> dict:
     proc = clinic.processed_dir
     pred = _read(os.path.join(proc, "dt_predictions.csv"))
-    if pred.empty:
+    if pred.empty and not archive:
         return {}
 
     tabpfn = _index_by(_read(os.path.join(proc, "tabpfn_predictions.csv")), "patient_id")
@@ -310,11 +321,27 @@ def build_payload(clinic: tc.Clinic, history: dict | None = None,
             "rec": (record_links or {}).get(str(uid)),
         })
 
+    # Циклы, которых в этом прогоне нет, но которые есть в базе, восстанавливаются
+    # из неё (см. fetch_archive). Строки текущего прогона имеют приоритет: они
+    # собраны из файлов, а не из денормализованного снимка, поэтому полнее.
+    fresh = {c["uid"] for c in cycles}
+    n_archived = 0
+    for uid, card in (archive or {}).items():
+        if uid in fresh:
+            continue
+        card = dict(card)
+        card["hist"] = ((history or {}).get(str(uid))
+                        or (history or {}).get(str(card.get("key") or "").upper(), []))
+        card["rec"] = (record_links or {}).get(str(uid))
+        cycles.append(card)
+        n_archived += 1
+
     cycles.sort(key=lambda c: (c["opu"] or "", c["name"]), reverse=True)
     return {
         "clinic": clinic.name, "code": clinic.code,
         "built": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "source": os.path.basename(clinic.processed_dir.rstrip("\\/")) or "processed",
+        "n_fresh": len(fresh), "n_archived": n_archived,
         "cycles": cycles,
     }
 
@@ -345,6 +372,189 @@ def fetch_history(tb: tc.Teable, base_id: str) -> dict:
         })
     for rows in out.values():
         rows.sort(key=lambda x: str(x.get("ts") or ""))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# archive: cycles that live in Teable but not in this run's processed files
+# ---------------------------------------------------------------------------
+#
+# ЗАЧЕМ ЭТОТ СЛОЙ. `data/processed/<клиника>/` — папка на клинику, а не на
+# прогон, поэтому каждый запуск перезаписывает в ней `dt_predictions.csv`.
+# Пока карточки строились только из этого файла, вьюер показывал ровно
+# последний прогон: 31.07.2026 прогон на июньской выгрузке (34 цикла) сменил
+# шестимесячную (250), и полугодовые карточки исчезли со страницы, хотя в базе
+# Teable оставались все 282 цикла. База накопительная — вьюер рядом с ней был
+# не накопительным, и это расхождение сбивало при каждом прогоне на подвыборке.
+#
+# Теперь недостающие циклы восстанавливаются из самой базы. Данных там хватает
+# на ПОЛНУЮ карточку, а не на урезанную: `Predictions` держит все модели,
+# медианы DT, кластер и риски, `Regression QC` — P10/P50/P90 по стадиям,
+# `Review` и `OZEMA` — свои вердикты, `Cycles` — личность, демографию и
+# фактическую воронку. Берётся САМЫЙ ПОЗДНИЙ прогон каждого цикла.
+#
+# Восстановленный цикл помечается `archived` — читателю должно быть видно, что
+# карточка собрана из базы по прошлому прогону, а не из файлов текущего.
+
+_OUTCOME_TO_PREG = {"Беременность": 1, "Нет": 0}
+_CLUSTER_TO_NUM = {"C0 Standard": 0.0, "C1 Poor": 1.0, "C2 High": 2.0}
+_PRIORITY_TO_NUM = {"1 Критично": 1.0, "2 Рекомендовано": 2.0, "3 В норме": 3.0}
+# Стадии Regression QC названы в базе по-русски теми же ярлыками, что и в карточке.
+_ARCHIVE_REG_STAGES = ["MII", "2PN", "Бласт", "Хор.бласт", "Витрифицировано"]
+
+
+def _run_order(fields: dict) -> str:
+    """Ключ сортировки «какой прогон новее».
+
+    У `Predictions` есть `Timestamp`, у `Review`/`Regression QC`/`OZEMA` — нет,
+    поэтому запасной вариант — сам идентификатор прогона: он начинается с даты
+    (`fertimed-20260731-1706-...`). Регистр разный между версиями синхронизатора
+    («Fertimed-...» против «fertimed-...»), поэтому сравнение — по нижнему.
+    """
+    return (str(fields.get("Timestamp") or "") + "|" + str(fields.get("Прогон") or "")).lower()
+
+
+def _newest_by_cycle(records: list) -> dict:
+    """Префикс «Ключа» -> поля САМОЙ ПОЗДНЕЙ строки этого цикла.
+
+    Строки помечены «<ключ цикла>::<id прогона>». Ключом цикла в новых прогонах
+    служит `cycle_uid`, в старых — составной join-ключ; поэтому здесь просто
+    сохраняются оба варианта префикса, а разрешение имени — на стороне вызова.
+    """
+    out: dict = {}
+    for rec in records:
+        fields = rec.get("fields", {})
+        composite = str(fields.get("Ключ") or "")
+        if not composite:
+            continue
+        key = composite.split("::", 1)[0]
+        current = out.get(key)
+        if current is None or _run_order(fields) >= _run_order(current):
+            out[key] = fields
+    return out
+
+
+def _lookup(source: dict, *keys) -> dict:
+    """Первое совпадение по любому из вариантов ключа цикла (uid / join-ключ)."""
+    for key in keys:
+        if not key:
+            continue
+        for variant in (str(key), str(key).upper()):
+            if variant in source:
+                return source[variant]
+    return {}
+
+
+def _interval_ok(value) -> bool | None:
+    text = _str(value)
+    if not text:
+        return None
+    if text.startswith("✅"):
+        return True
+    if text.startswith("⚠"):
+        return False
+    return None
+
+
+def fetch_archive(tb: tc.Teable, base_id: str) -> dict:
+    """cycle_uid -> карточка цикла, собранная из базы (для циклов вне прогона)."""
+    try:
+        tables = tc.resolve_tables(tb, base_id)
+        cycle_rows = tb.all_records(tables["Cycles"])
+        preds = _newest_by_cycle(tb.all_records(tables["Predictions"]))
+        regs = _newest_by_cycle(tb.all_records(tables["Regression QC"]))
+        revs = _newest_by_cycle(tb.all_records(tables["Review"]))
+        ozem = _newest_by_cycle(tb.all_records(tables["OZEMA"]))
+    except Exception as exc:  # noqa: BLE001 - архив опционален, прогон не блокирует
+        print(f"    [!] архив базы недоступен: {exc}")
+        return {}
+
+    out: dict = {}
+    for rec in cycle_rows:
+        cf = rec.get("fields", {})
+        key = _str(cf.get("ID пациента"))
+        # Единичные старые строки базы лежат без cycle_uid (у Fertimed — одна,
+        # из прогона 29.07.2026). Ключом карточки тогда служит составной
+        # join-ключ: без него пациентка просто исчезала бы из вьюера. Коллизия
+        # исключена — cycle_uid всегда начинается с "CYC-", join-ключ никогда.
+        uid = _str(cf.get("cycle_uid")) or key
+        if not uid:
+            continue
+        pf = _lookup(preds, uid, key)
+        rf = _lookup(regs, uid, key)
+        vf = _lookup(revs, uid, key)
+        of = _lookup(ozem, uid, key)
+
+        reg_out = {}
+        for stage in _ARCHIVE_REG_STAGES:
+            if rf.get(f"{stage} P50") is None:
+                continue
+            reg_out[stage] = {
+                "p10": _num(rf.get(f"{stage} P10")), "p50": _num(rf.get(f"{stage} P50")),
+                "p90": _num(rf.get(f"{stage} P90")), "actual": _num(rf.get(f"{stage} факт")),
+                "ok": _interval_ok(rf.get(f"{stage} интервал")),
+            }
+
+        out[uid] = {
+            "uid": uid, "key": key,
+            "pid": key, "name": _str(cf.get("Имя")) or "—",
+            "opu": _date(cf.get("Дата OPU")), "et": _date(cf.get("Дата ET")),
+            "age": _num(cf.get("Возраст")), "amh": _num(cf.get("AMH")),
+            "bmi": _num(cf.get("BMI")), "afc": _num(cf.get("AFC")),
+            "attempt": _num(cf.get("Попытка")),
+            "emb": _str(cf.get("Эмбриолог")), "doc": _str(cf.get("Врач")),
+            "method": _str(cf.get("IVF/ICSI")), "sperm": None,
+            "preg": _OUTCOME_TO_PREG.get(_str(cf.get("Исход"))),
+            "real": {
+                "Фолликулы": _num(cf.get("N фолликулов")), "ООК": _num(cf.get("OCC")),
+                "MII": _num(cf.get("MII")), "2PN": _num(cf.get("2pN")),
+                "Бласт": _num(cf.get("Bl")), "Хор.бласт": _num(cf.get("Good Bl")),
+                "Витрифицировано": _num(cf.get("Cryo")),
+            },
+            "med": {"ООК": _num(pf.get("med OCC")), "MII": _num(pf.get("med MII")),
+                    "2PN": _num(pf.get("med 2PN")), "Бласт": _num(pf.get("med Bl")),
+                    "Хор.бласт": _num(pf.get("med Good")), "Витрифицировано": None},
+            "prob": {
+                "prai": _num(pf.get("PRAI (TabPFN)")),
+                "ci_low": _num(pf.get("PRAI CI низ")), "ci_high": _num(pf.get("PRAI CI верх")),
+                "ci_width": _num(pf.get("Ширина CI, пп")), "ci_wide": _bool(pf.get("Широкий CI")),
+                "dt": _num(pf.get("DIGITAL TWIN")), "mc": _num(pf.get("P per transfer")),
+                "cum": _num(pf.get("P cum if viable")), "overall": _num(pf.get("P overall cycle")),
+                "bayes": _num(pf.get("Bayes mean")), "bayes_lo": _num(pf.get("Bayes CI низ")),
+                "bayes_hi": _num(pf.get("Bayes CI верх")),
+                "kat": _num(pf.get("KAT")), "nvsa": _num(pf.get("NVSA")),
+                "csdi": _num(pf.get("CSDI")), "gnn": _num(pf.get("GNN")),
+                "dnn": _num(pf.get("DNN")),
+                # p_tabpfn отдельной колонкой в базе не лежит: в неё уже сведён PRAI.
+                "tabpfn": None,
+            },
+            "risk": {
+                "cluster": _CLUSTER_TO_NUM.get(_str(cf.get("Кластер"))),
+                "c0": _num(pf.get("C0 prob")), "c1": _num(pf.get("C1 prob")),
+                "c2": _num(pf.get("C2 prob")),
+                "viable": _num(pf.get("P viable")), "cancel": _num(pf.get("P cancel")),
+                "ohss_mod": _num(pf.get("OHSS умеренный")), "ohss_sev": _num(pf.get("OHSS тяжёлый")),
+                "no_blast": _num(pf.get("P без бластоцист")),
+                "no_good": _num(pf.get("P без хор. бластоцист")),
+                "bank_mii": _num(pf.get("Banking P на MII")),
+                "bank_eup": _num(pf.get("Banking ожид. эуплоидных")),
+            },
+            "reg": reg_out,
+            "avail": {"gnn": _bool(pf.get("GNN доступен")), "csdi": _bool(pf.get("CSDI доступен")),
+                      "dnn": _str(pf.get("Статус DNN"))},
+            "review": ({"priority": _PRIORITY_TO_NUM.get(_str(vf.get("Приоритет"))),
+                        "reason": _str(vf.get("Основание"))} if vf else None),
+            "ozema": ({"flag": _str(of.get("Флаг")), "oma": _str(of.get("OMA")),
+                       "ff": _str(of.get("FF")), "za": _str(of.get("ZA")),
+                       "eea": _str(of.get("EEA")),
+                       "flagged_n": _num(of.get("Флагов у пациентки")),
+                       "note": _str(of.get("Примечание"))} if of else None),
+            "hist": [],
+            "rec": None,
+            # Метка честности: карточка собрана из базы по последнему прогону,
+            # в котором цикл участвовал, а не из файлов текущего прогона.
+            "archived": _str(cf.get("Последний прогон")) or "прошлый прогон",
+        }
     return out
 
 
@@ -509,17 +719,25 @@ function renderList(q){
   const query = (q || '').trim().toLowerCase();
   const rows = DATA.cycles.filter(c => !query ||
     (c.name + ' ' + (c.pid||'') + ' ' + (c.uid||'')).toLowerCase().includes(query));
-  $('#count').textContent = rows.length + ' из ' + DATA.cycles.length + ' циклов';
+  /* Состав страницы называется явно: сколько циклов из текущего прогона и
+     сколько восстановлено из базы. Иначе рост числа циклов после прогона на
+     подвыборке читается как «выгрузка выросла». */
+  const arch = DATA.n_archived
+    ? ' (' + DATA.n_fresh + ' из прогона + ' + DATA.n_archived + ' из базы)' : '';
+  $('#count').textContent = rows.length + ' из ' + DATA.cycles.length + ' циклов' + arch;
   $('#list').innerHTML = rows.map(c => {
     const p = c.prob.prai;
     const pillCls = p === null || p === undefined ? '' : ' badge-' +
       (tier(p) === 'low' ? 'crit' : tier(p) === 'mid' ? 'warn' : 'ok');
     const rev = c.review && c.review.priority === 1
       ? "<span class='badge badge-crit'>P1</span>" : '';
+    /* Цикл не из текущего прогона, а восстановленный из базы — это должно быть
+       видно в списке, иначе архив выглядит как часть свежей выгрузки. */
+    const arch = c.archived ? "<span class='badge badge-info'>архив</span>" : '';
     return `<div class="pat${c.uid===SEL?' on':''}" data-uid="${esc(c.uid)}">
       <div class="pn">${esc(c.name)}</div>
       <div class="ps"><span>${esc(c.opu || '—')}</span><span>${esc(c.pid || '')}</span>
-        <span class="badge${pillCls}">${pct(p)}</span>${rev}</div></div>`;
+        <span class="badge${pillCls}">${pct(p)}</span>${rev}${arch}</div></div>`;
   }).join('') || "<div class='empty'>Ничего не найдено</div>";
   document.querySelectorAll('.pat').forEach(el =>
     el.onclick = () => select(el.dataset.uid, true));
@@ -736,6 +954,11 @@ function select(uid, push){
       cycle_uid <code>${esc(c.uid)}</code>${c.rec ? ` · <a href="${esc(c.rec)}"
       target="_blank">открыть запись в Teable</a>` : ''}</div>
     <div style="margin:9px 0 4px">${outcomeBadge(c.preg)}</div>
+    ${c.archived ? `<div class="note">Карточка собрана из базы Teable по прогону
+      <code>${esc(c.archived)}</code> — этого цикла нет в текущей выгрузке
+      (<code>${esc(DATA.source)}</code>). Числа те же, что были синхронизированы
+      тогда; поля, которых база не хранит (источник спермы, отдельный выход
+      TabPFN), здесь пусты — это отсутствие в архиве, а не отсутствие в цикле.</div>` : ''}
     <div class="stats">
       <div class="jstat"><div class="jsl">Возраст</div><div class="jsv">${n0(c.age)}</div></div>
       <div class="jstat"><div class="jsl">AMH</div><div class="jsv">${n1(c.amh)}</div></div>
@@ -762,7 +985,9 @@ function select(uid, push){
       <div>Врач: <b>${esc(c.doc || '—')}</b></div>
       <div>Источник спермы: <b>${esc(c.sperm || '—')}</b></div>
       <div>AFC: <b>${n0(c.afc)}</b></div></div></div>
-    <div class="foot">Данные прогона: ${esc(DATA.source)} · собрано ${esc(DATA.built)}.
+    <div class="foot">${c.archived
+        ? `Источник: база Teable, прогон <code>${esc(c.archived)}</code>`
+        : `Данные прогона: ${esc(DATA.source)}`} · собрано ${esc(DATA.built)}.
       Числа приходят посчитанными из пайплайна; страница только отображает их.</div>`;
   window.scrollTo(0, 0);
 }
@@ -872,13 +1097,15 @@ def build(cfg: dict, only: str | None = None, history: bool = True) -> list[dict
 
     entries = []
     for clinic in tc.clinics(cfg, only):
-        hist, links = {}, {}
+        hist, links, archive = {}, {}, {}
         if tb is not None and clinic.configured:
             hist = fetch_history(tb, clinic.base_id)
             links = fetch_record_links(tb, clinic.base_id, teable_url)
-        payload = build_payload(clinic, hist, links)
+            archive = fetch_archive(tb, clinic.base_id)
+        payload = build_payload(clinic, hist, links, archive)
         if not payload:
-            print(f"  [skip] {clinic.name}: нет dt_predictions.csv в {clinic.processed_dir}")
+            print(f"  [skip] {clinic.name}: нет ни dt_predictions.csv в "
+                  f"{clinic.processed_dir}, ни циклов в базе")
             continue
         page = os.path.join(out_dir, f"{clinic.code}.html")
         tmp = page + ".tmp"
@@ -889,8 +1116,11 @@ def build(cfg: dict, only: str | None = None, history: bool = True) -> list[dict
                  "n": len(payload["cycles"]), "built": payload["built"],
                  "n_out": sum(1 for c in payload["cycles"] if c.get("preg") is not None),
                  "n_rev": sum(1 for c in payload["cycles"] if c.get("review"))}
+        entry["n_arch"] = payload.get("n_archived", 0)
         entries.append(entry)
-        print(f"  cards: {clinic.name} -> {entry['n']} циклов "
+        arch = (f", из них {entry['n_arch']} из базы (прошлые прогоны)"
+                if entry["n_arch"] else "")
+        print(f"  cards: {clinic.name} -> {entry['n']} циклов{arch} "
               f"({round(os.path.getsize(page)/1024)} КБ) {base_url}/{clinic.code}.html")
 
     # The index always lists every clinic already built, not just this run's.
