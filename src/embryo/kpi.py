@@ -118,11 +118,27 @@ def _safe_div(num: pd.Series, den: pd.Series) -> pd.Series:
     return out
 
 
-def compute_rates(df: pd.DataFrame) -> pd.DataFrame:
-    """Calculate row rates while keeping the accepted ``2PN != 0`` filter."""
+def compute_rates(df: pd.DataFrame, drop_without_two_pn: bool = True) -> pd.DataFrame:
+    """Calculate row rates while keeping the accepted ``2PN != 0`` filter.
+
+    ``drop_without_two_pn=False`` keeps rows that never reached the
+    fertilisation check. It exists for the DOCTOR competency table only:
+    OCCR=OCC/follicles and MIIR=MII/OCC are computed entirely above the 2PN
+    stage, so a retrieval-only cycle ("Только пункция" — oocyte banking, donor
+    retrieval) is a complete OCCR/MIIR observation even though 2PN is blank
+    there by definition. Dropping it would erase a real retrieval by a real
+    doctor from the doctor's own table (owner confirmed 2026-07-31).
+
+    Everything else — embryologist metrics, cohort rates, the model dataset —
+    keeps the filter, so the owner's standing ``2PN==0`` exclusion is
+    untouched.
+    """
     d = df.copy()
     two_pn = _numeric_column(d, "two_pn")
-    d = d.loc[two_pn.notna() & two_pn.ne(0)].copy()
+    # A recorded 2PN==0 is dropped either way; only the treatment of a BLANK
+    # 2PN differs (pandas ``ne`` already yields True for NaN).
+    keep = two_pn.notna() & two_pn.ne(0) if drop_without_two_pn else two_pn.ne(0)
+    d = d.loc[keep].copy()
     for col in _NUMERIC:
         if col in d.columns:
             d[col] = pd.to_numeric(d[col], errors="coerce")
@@ -318,22 +334,63 @@ def _token_match(series: pd.Series, tokens: Sequence[str]) -> pd.Series:
     return normed.isin(wanted)
 
 
+def _open_cycle_mask(df: pd.DataFrame) -> pd.Series:
+    """Cycles still running at export time, so their blanks are not observations.
+
+    An explicit closure signal wins when the export carries one: Fertimed's
+    "Причина завершения программы ВРТ" (``clin_termination_reason``) is filled
+    exactly when the programme ended — "Остановка развития эмбрионов",
+    "Отсутствие оплодотворения", "Криоконсервация ооцитов" and so on. A blank
+    reason is the only genuinely open cycle.
+
+    Without such a column the older proxy stands: no Bl value yet means
+    mid-cultivation. That proxy must not be used where a closure signal exists
+    — it silently drops every retrieval-only cycle (no Bl by definition) from
+    the doctor's OCCR/MIIR, which are computed from follicles/OCC/MII and never
+    touch Bl at all (owner confirmed 2026-07-31).
+    """
+    if "clin_termination_reason" in df.columns:
+        reason = df["clin_termination_reason"]
+        return ~(reason.notna() & (reason.astype(str).str.strip() != ""))
+    return _numeric_column(df, "bl_total").isna()
+
+
 def competency_exclusion_mask(df: pd.DataFrame, columns_cfg: dict) -> pd.Series:
     """Rows excluded only from the embryologist/doctor competency tables.
 
-    Mirrors the owner's Vienna-style dashboard: open cycles with no Bl value
-    yet (mid-cultivation at export time), NO-retrieval cycles, and freeze-all
+    Mirrors the owner's Vienna-style dashboard: cycles still open at export
+    time (see ``_open_cycle_mask``), NO-retrieval cycles, and freeze-all
     (Cryo, no fresh transfer planned) cycles. This is deliberately narrower
-    than nothing (cohort KPI/review-list/OZEMA are unaffected) and does not
+    than nothing (review-list/OZEMA are unaffected) and does not
     touch the fixed ``2PN==0`` exclusion already applied upstream.
     """
     cfg = columns_cfg.get("competency_exclusion", {}) if columns_cfg else {}
-    open_cycle = _numeric_column(df, "bl_total").isna()
+    open_cycle = _open_cycle_mask(df)
     method = df["fertilization_method"] if "fertilization_method" in df.columns else pd.Series(
         pd.NA, index=df.index, dtype="string")
     no_retrieval = _token_match(method, cfg.get("no_retrieval_tokens", []))
     freeze_all = _token_match(method, cfg.get("freeze_all_tokens", []))
     return (open_cycle | no_retrieval | freeze_all).fillna(False)
+
+
+def embryologist_only_exclusion_mask(df: pd.DataFrame, columns_cfg: dict) -> pd.Series:
+    """Rows that stay in the DOCTOR competency table but leave the embryologist one.
+
+    Fertimed's "Только пункция" (retrieval only — oocyte banking, donor
+    retrieval, cancelled fertilisation) is a real retrieval by a real doctor:
+    follicles/OCC/MII are recorded and OCCR/MIIR must count them (owner
+    confirmed 2026-07-31). Nothing downstream of insemination happened, so the
+    row carries no FR/ClR/BlR/TGBDR/DegR/3pNR observation at all and must not
+    be read as an embryologist's cycle.
+
+    Config-driven (``competency_exclusion.embryologist_only_treatment_tokens``
+    matched against ``treatment_type``); a no-op for a clinic without that
+    column/config.
+    """
+    cfg = columns_cfg.get("competency_exclusion", {}) if columns_cfg else {}
+    treatment = df["treatment_type"] if "treatment_type" in df.columns else pd.Series(
+        pd.NA, index=df.index, dtype="string")
+    return _token_match(treatment, cfg.get("embryologist_only_treatment_tokens", [])).fillna(False)
 
 
 def funnel_exclusion_mask(df: pd.DataFrame, columns_cfg: dict) -> pd.Series:

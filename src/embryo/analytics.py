@@ -15,7 +15,8 @@ import pandas as pd
 
 from ._io import atomic_write_excel
 from .kpi import (DOCTOR_METRICS, EMBRYOLOGIST_METRICS, aggregate_kpi_slices, aggregate_kpis,
-                  compute_kpi, compute_rates, competency_exclusion_mask, funnel_exclusion_mask)
+                  compute_kpi, compute_rates, competency_exclusion_mask,
+                  embryologist_only_exclusion_mask, funnel_exclusion_mask)
 
 try:
     from sklearn.metrics import brier_score_loss, roc_auc_score
@@ -326,12 +327,25 @@ def _funnel_excluded_cycle_uids(lab_population: pd.DataFrame | None,
 
 
 def _lab_kpi_slices(lab_population: pd.DataFrame, columns_cfg: dict) -> dict[str, pd.DataFrame]:
-    """Embryologist/doctor competency tables from the WIDER lab-stage population.
+    """ALL Vienna laboratory KPI tables from the WIDER lab-stage population.
 
-    Unlike the cohort/time/method slices (gated to transferred>0 & Preg known),
-    these two must include every lab-evaluable cycle regardless of transfer outcome
-    (matches the owner's Vienna-style dashboard), minus its own narrower exclusion
-    set (open cycles with no Bl value yet, NO-retrieval, freeze-all/Cryo).
+    Laboratory KPI describe what the lab did with the oocytes it received, so
+    every lab-evaluable cycle counts regardless of whether a transfer happened
+    or how it ended (owner reaffirmed 2026-07-31; matches the owner's
+    Vienna-style dashboard). Until then only the embryologist/doctor competency
+    tables were built here while overall/time/method still came from the
+    transfer-gated cohort — on Fertimed's June export that cohort is 32/34
+    cryo-transfer rows, so "KPI Overall" described frozen-embryo transfers, not
+    the laboratory.
+
+    Three nested exclusion sets, each narrower than the last:
+      * ``competency_exclusion_mask`` — both tables (still-open cycles with no
+        Bl value yet, NO-retrieval, freeze-all).
+      * ``funnel_exclusion_mask`` — embryologist metrics only: this row's
+        2PN/Bl counts were carried over by the MIS from another retrieval.
+      * ``embryologist_only_exclusion_mask`` — embryologist metrics only:
+        retrieval-only cycles that never reached insemination, whose
+        follicles/OCC/MII are still a real retrieval for OCCR/MIIR.
 
     ``lab_population`` already carries the true columns.yaml canonical names
     (occ/mii/two_pn/.../fertilization_method/sperm_source) straight from
@@ -340,19 +354,48 @@ def _lab_kpi_slices(lab_population: pd.DataFrame, columns_cfg: dict) -> dict[str
     translation needed here; ``kpi.compute_rates``/``competency_exclusion_mask``
     read the columns.yaml names directly.
     """
-    # funnel_exclusion (e.g. Fertimed cryo-transfer rows whose 2PN/Bl counts were
-    # carried over from the original retrieval batch) affects only the
-    # embryologist metrics (FR/ClR/BlR/TGBDR/DegR/3pNR, all 2PN/Bl-stage).
     # Doctor metrics (OCCR/MIIR) read occ/follicles/mii, which still reflect a
-    # real, single retrieval event by that doctor even on a cryo-transfer row —
-    # owner confirmed 2026-07-18 these must NOT be excluded for doctor KPI.
+    # real, single retrieval event by that doctor even on a row whose
+    # fertilisation-stage counts are stale or absent — owner confirmed
+    # 2026-07-18 (stale funnel) and 2026-07-31 (retrieval-only) that these must
+    # NOT be excluded for doctor KPI.
     base_excluded = competency_exclusion_mask(lab_population, columns_cfg)
-    funnel_excluded = funnel_exclusion_mask(lab_population, columns_cfg)
+    embryologist_excluded = (base_excluded
+                             | funnel_exclusion_mask(lab_population, columns_cfg)
+                             | embryologist_only_exclusion_mask(lab_population, columns_cfg))
+    # Doctor rates keep rows whose 2PN is blank because the cycle never reached
+    # the fertilisation check: OCCR/MIIR live entirely above that stage. The
+    # embryologist frame keeps the standing 2PN filter.
     lab_rates = compute_rates(lab_population)
+    doctor_rates = compute_rates(lab_population, drop_without_two_pn=False)
+    # Stable sheet schema: the cohort slices used to come from _canonical_kpi_frame,
+    # whose method column is "fert_method". The lab population carries the
+    # columns.yaml name instead, so alias it rather than renaming the output.
+    for frame in (lab_rates, doctor_rates):
+        if "fert_method" not in frame.columns and "fertilization_method" in frame.columns:
+            frame["fert_method"] = frame["fertilization_method"]
     embryologist_eligible = lab_rates.loc[
-        ~(base_excluded | funnel_excluded).reindex(lab_rates.index, fill_value=False)]
-    doctor_eligible = lab_rates.loc[~base_excluded.reindex(lab_rates.index, fill_value=False)]
+        ~embryologist_excluded.reindex(lab_rates.index, fill_value=False)]
+    doctor_eligible = doctor_rates.loc[
+        ~base_excluded.reindex(doctor_rates.index, fill_value=False)]
+
+    # overall/time/method mix both metric groups, so each group is aggregated on
+    # its own correctly-scoped cohort and the two halves are recombined — the
+    # same pattern _kpi_tables already used for the transfer-gated cohort.
+    slice_kwargs = dict(
+        time_col="date_opu" if "date_opu" in lab_rates.columns else None,
+        method_col="fert_method" if "fert_method" in lab_rates.columns else None,
+    )
+    doctor_slices = aggregate_kpi_slices(doctor_eligible, **slice_kwargs)
+    embryologist_slices = aggregate_kpi_slices(embryologist_eligible, **slice_kwargs)
     out: dict[str, pd.DataFrame] = {}
+    for key in ("overall", "time", "method"):
+        doc_df, emb_df = doctor_slices.get(key), embryologist_slices.get(key)
+        if doc_df is None or emb_df is None:
+            continue
+        doc_rows = doc_df[doc_df["metric"].isin(DOCTOR_METRICS)]
+        emb_rows = emb_df[~emb_df["metric"].isin(DOCTOR_METRICS)]
+        out[key] = pd.concat([doc_rows, emb_rows], ignore_index=True)
     if "embryologist" in embryologist_eligible.columns:
         out["embryologist"] = aggregate_kpis(embryologist_eligible, "embryologist",
                                              metrics=EMBRYOLOGIST_METRICS)
@@ -362,19 +405,28 @@ def _lab_kpi_slices(lab_population: pd.DataFrame, columns_cfg: dict) -> dict[str
 
 
 def _kpi_tables(df_u: pd.DataFrame, lab_population: pd.DataFrame | None = None,
-                columns_cfg: dict | None = None) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+                columns_cfg: dict | None = None,
+                cohort_population: pd.DataFrame | None = None,
+                ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
     canonical = _canonical_kpi_frame(df_u)
     cycle = compute_kpi(canonical)
     if cycle.empty:
         return cycle, {"overall": pd.DataFrame()}
+    # When a lab population is supplied, EVERY Vienna KPI table comes from it
+    # (see _lab_kpi_slices) — laboratory performance is not conditioned on a
+    # transfer having happened. The transfer-gated tables below remain the
+    # fallback for a caller that has no lab population (e.g. run_analytics
+    # invoked directly from a notebook with dt/opu only).
+    if lab_population is not None and not lab_population.empty and columns_cfg is not None:
+        return cycle, _lab_kpi_slices(lab_population, columns_cfg)
     # funnel_exclusion_mask needs "treatment_type", which df_u/canonical/cycle don't
     # carry (OPU-enriched frame keeps only the fixed OPU-table contract) — computed
-    # instead from lab_population (same source rows, still has treatment_type) and
+    # instead from cohort_population (same source rows, still has treatment_type) and
     # applied here by cycle_uid. Doctor metrics (OCCR/MIIR) never exclude these
     # rows (their occ/follicles/mii still reflect one real retrieval event); only
     # embryologist metrics (2PN/Bl-stage) do (owner confirmed 2026-07-18) — each
     # metric group computed from its own correctly-scoped cohort, then recombined.
-    excluded_uids = _funnel_excluded_cycle_uids(lab_population, columns_cfg)
+    excluded_uids = _funnel_excluded_cycle_uids(cohort_population, columns_cfg)
     kwargs = dict(
         time_col="date_opu" if "date_opu" in cycle else None,
         method_col="fert_method" if "fert_method" in cycle else None,
@@ -398,8 +450,6 @@ def _kpi_tables(df_u: pd.DataFrame, lab_population: pd.DataFrame | None = None,
                 slices[key] = pd.concat([doc_rows, emb_rows], ignore_index=True)
     else:
         slices = doctor_slices
-    if lab_population is not None and not lab_population.empty and columns_cfg is not None:
-        slices.update(_lab_kpi_slices(lab_population, columns_cfg))
     return cycle, slices
 
 
@@ -420,15 +470,27 @@ def _review_list(df_u: pd.DataFrame) -> pd.DataFrame:
 def run_analytics(dt: pd.DataFrame, opu: pd.DataFrame,
                   out_xlsx: str | Path = "data/processed/DT_Analytics_Report.xlsx",
                   lab_population: pd.DataFrame | None = None,
-                  columns_cfg: dict | None = None) -> dict:
+                  columns_cfg: dict | None = None,
+                  cohort_population: pd.DataFrame | None = None) -> dict:
     """Run local analytics and atomically create the multi-sheet Excel report.
 
-    ``lab_population``/``columns_cfg`` are optional: when supplied, the
-    embryologist/doctor KPI slices are built from the wider lab-stage
-    population (see ``_lab_kpi_slices``) instead of the transfer-gated cohort.
+    Two source populations, deliberately kept apart:
+
+    * ``cohort_population`` — the report cohort (transferred>0 & outcome known),
+      the same rows ``df_u`` was built from. Used to restore true pre-DT counts
+      and to spot rows whose funnel counts are stale, both of which have to be
+      keyed row-for-row against ``df_u``.
+    * ``lab_population`` — the wider lab-stage population (no transfer gate).
+      When supplied together with ``columns_cfg`` it is the source of every
+      Vienna KPI table (see ``_lab_kpi_slices``).
+
+    Passing only ``lab_population`` keeps the old behaviour of using it for
+    both, which is correct exactly when it is a superset of the cohort.
     """
     merged, df_u, _ = build_merged(dt, opu)
-    df_u = _restore_true_counts(df_u, lab_population)
+    if cohort_population is None:
+        cohort_population = lab_population
+    df_u = _restore_true_counts(df_u, cohort_population)
     df_u = auto_interpret(df_u)  # deliberately after all joined CI fields exist
     df_preg = df_u.loc[_num(df_u["Preg"]).notna()].copy()
     summary = build_summary(df_u)
@@ -439,7 +501,7 @@ def run_analytics(dt: pd.DataFrame, opu: pd.DataFrame,
     # (mirrors MIIR) and never excludes these rows: occ/mii still reflect one
     # real retrieval event by that doctor (owner confirmed 2026-07-18). Empty
     # excluded set is a no-op (e.g. clinic A).
-    excluded_uids = _funnel_excluded_cycle_uids(lab_population, columns_cfg)
+    excluded_uids = _funnel_excluded_cycle_uids(cohort_population, columns_cfg)
     conversions = conversion_rates(df_u)
     if excluded_uids and "cycle_uid" in df_u.columns:
         restricted = conversion_rates(df_u.loc[~df_u["cycle_uid"].isin(excluded_uids)])
@@ -447,7 +509,7 @@ def run_analytics(dt: pd.DataFrame, opu: pd.DataFrame,
         embryologist_steps = restricted.loc[restricted["step"] != "OCC→MII"]
         conversions = pd.concat([doctor_step, embryologist_steps], ignore_index=True)
     review = _review_list(df_u)
-    kpi_cycle, kpi_slices = _kpi_tables(df_u, lab_population, columns_cfg)
+    kpi_cycle, kpi_slices = _kpi_tables(df_u, lab_population, columns_cfg, cohort_population)
 
     drop_internal = [col for col in df_u.columns if col.startswith("_")]
     sheets: dict[str, pd.DataFrame] = {

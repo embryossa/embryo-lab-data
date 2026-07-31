@@ -194,3 +194,66 @@ def test_unrecognized_outcome_text_becomes_missing_and_warns():
     # прошла фильтр когорты (исход был непустым), но остаётся неклассифицированной
     row = df.loc[df["patient_id"] == "CASE-CRYO-OK"].iloc[0]
     assert pd.isna(row["Preg"])
+
+
+def _wide_raw() -> pd.DataFrame:
+    """Та же фикстура плюс "Причина завершения программы ВРТ" и строки без исхода.
+
+    Пустой исход у свежих циклов — не искусственный случай, а норма июньской
+    выгрузки: заполненный исход там стоит почти только у криопереносов.
+    """
+    raw = _raw_rows()
+    raw["Причина завершения программы ВРТ"] = [
+        "Перенос эмбрионов", "Криоконсервация ооцитов", "Инсеминация",
+        "Остановка развития эмбрионов", "Остановка развития эмбрионов",
+        None, "ПГТ", "ПГТ", "Перенос эмбрионов", "ПГТ",
+        "ПГТ", "ПГТ", "ПГТ", "ПГТ", "ПГТ",
+    ]
+    # свежие циклы без переноса: у половины строк исход пуст
+    raw.loc[3:7, "Исход переноса"] = None
+    # закрытый цикл, у которого бластоцист не получилось
+    raw.loc[3, "Число Bl"] = None
+    raw.loc[3, "Число Bl хор.кач-ва"] = None
+    # цикл, ещё идущий на момент выгрузки (причина завершения пуста)
+    raw.loc[5, "Число Bl"] = None
+    raw.loc[5, "Число Bl хор.кач-ва"] = None
+    return raw
+
+
+def test_prepare_wide_keeps_cycles_without_transfer_outcome():
+    """Лабораторные KPI считаются по всем циклам, а не только по переносам."""
+    wide, _ = fertimed.prepare_wide(_wide_raw(), COLUMNS_CFG, SETTINGS_CFG)
+    assert wide["transfer_outcome"].isna().any()          # строки без исхода сохранены
+    assert wide["Preg"].isna().any()                      # и это не ошибка кодирования
+    cohort, _ = fertimed.prepare(_wide_raw(), COLUMNS_CFG, SETTINGS_CFG)
+    assert len(wide) > len(cohort)
+
+
+def test_prepare_wide_drops_only_cryo_and_insemination():
+    wide, _ = fertimed.prepare_wide(_wide_raw(), COLUMNS_CFG, SETTINGS_CFG)
+    treatments = set(wide["treatment_type"])
+    assert "Криоперенос" not in treatments      # пункция уже есть отдельной строкой
+    assert "Инсеминация" not in treatments      # ВМИ — другая модальность
+    assert "Только пункция" in treatments       # остаётся ради OCCR/MIIR врача
+    assert {"ИКСИ", "ЭКО", "ЭКО + ИКСИ", "Получение ЯК (реципиент)"} <= treatments
+
+
+def test_prepare_wide_reads_blank_counts_of_closed_cycle_as_observed_zero():
+    wide, _ = fertimed.prepare_wide(_wide_raw(), COLUMNS_CFG, SETTINGS_CFG)
+    by_id = wide.set_index("patient_id")
+    closed = by_id.loc["CASE-NO-INSEMINATED"]              # причина: остановка развития
+    assert float(closed["bl_total"]) == 0.0
+    assert float(closed["bl_good"]) == 0.0
+    still_open = by_id.loc["CASE-IVF-MII-FALLBACK"]        # причина завершения пуста
+    assert bool(pd.isna(still_open["bl_total"]))
+
+
+def test_prepare_wide_never_manufactures_two_pn_zero():
+    """2PN=0 исключает строку по неподвижному решению владельца — производить
+    такие строки из пропусков нельзя даже у закрытого цикла."""
+    raw = _wide_raw()
+    raw.loc[3, "2 pN"] = None
+    wide, _ = fertimed.prepare_wide(raw, COLUMNS_CFG, SETTINGS_CFG)
+    row = wide.set_index("patient_id").loc["CASE-NO-INSEMINATED"]
+    assert bool(pd.isna(row["two_pn"]))
+    assert bool(pd.isna(row["bl_total"]))   # предшествующая стадия неизвестна -> не заполняем

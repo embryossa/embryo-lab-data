@@ -161,3 +161,61 @@ def test_funnel_exclusion_mask_is_noop_without_treatment_type_column():
     frame = pd.DataFrame({"bl_total": [1, 2]})
     cfg = {"funnel_exclusion": {"stale_funnel_tokens": ["Криоперенос"]}}
     assert funnel_exclusion_mask(frame, cfg).tolist() == [False, False]
+
+
+def test_open_cycle_falls_back_to_bl_total_without_closure_signal():
+    """Клиники без "Причины завершения" продолжают жить по прежнему прокси."""
+    frame = pd.DataFrame({
+        "bl_total": [3, None],
+        "fertilization_method": ["ICSI", "ICSI"],
+    })
+    assert competency_exclusion_mask(frame, _EXCLUSION_CFG).tolist() == [False, True]
+
+
+def test_closure_signal_wins_over_missing_bl_total():
+    """Пустой Bl у закрытого цикла — не открытый цикл: строка остаётся в KPI.
+
+    Иначе из знаменателя уходят ровно те циклы, где бластоцист не получилось
+    (и, отдельно, каждая строка "Только пункция", у которой Bl нет никогда,
+    хотя OCCR/MIIR врача считаются выше стадии бластоцисты).
+    """
+    frame = pd.DataFrame({
+        "bl_total": [None, None, 2],
+        "clin_termination_reason": ["Остановка развития эмбрионов", None, "ПГТ"],
+        "fertilization_method": ["ICSI", "ICSI", "ICSI"],
+    })
+    mask = competency_exclusion_mask(frame, _EXCLUSION_CFG)
+    assert mask.tolist() == [False, True, False]  # закрыт / ещё идёт / закрыт
+
+
+def test_embryologist_only_exclusion_keeps_row_for_doctor_table():
+    from embryo.kpi import embryologist_only_exclusion_mask
+    frame = pd.DataFrame({
+        "treatment_type": ["Только пункция", "ИКСИ", "только пункция", None],
+        "clin_termination_reason": ["Криоконсервация ооцитов", "ПГТ", "Донор", "Овуляция"],
+    })
+    cfg = {"competency_exclusion": {"embryologist_only_treatment_tokens": ["Только пункция"]}}
+    mask = embryologist_only_exclusion_mask(frame, cfg)
+    assert mask.tolist() == [True, False, True, False]
+    # это НЕ competency-исключение: врачебная таблица такую строку сохраняет
+    assert competency_exclusion_mask(frame, cfg).tolist() == [False, False, False, False]
+
+
+def test_compute_rates_keeps_retrieval_only_rows_for_doctor_metrics():
+    """OCCR/MIIR считаются выше стадии 2PN, поэтому пустой 2PN их не отменяет.
+
+    Записанный 2PN=0 продолжает выпадать в обоих режимах — неподвижное
+    решение владельца не затронуто.
+    """
+    frame = pd.DataFrame({
+        "follicles": [10, 10, 10],
+        "occ": [8, 8, 8],
+        "mii": [6, 6, 6],
+        "inseminated": [8, None, 8],
+        "two_pn": [6, None, 0],
+    })
+    assert len(compute_rates(frame)) == 1
+    doctor = compute_rates(frame, drop_without_two_pn=False)
+    assert len(doctor) == 2                      # пустой 2PN сохранён, записанный 0 — нет
+    assert doctor["OCCR"].tolist() == [0.8, 0.8]
+    assert doctor["MIIR"].tolist() == [0.75, 0.75]

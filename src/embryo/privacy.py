@@ -63,7 +63,17 @@ def add_cycle_uid(df: pd.DataFrame, key_col: str, secret: bytes) -> pd.DataFrame
         raise KeyError(f"missing cycle_uid source column: {key_col}")
     out["cycle_uid"] = out[key_col].map(lambda x: make_cycle_uid(x, secret))
     if out["cycle_uid"].duplicated().any():
-        raise ValueError("cycle_uid is not unique; source identifier is duplicated")
+        # Сообщение локальное (консоль оператора, не агентский пакет), поэтому в
+        # нём можно назвать сам ключ: без него владелец не найдёт строку в МИС и
+        # не поймёт, что чинить. Дедупликация здесь СОЗНАТЕЛЬНО не делается —
+        # какая из совпавших строк верна, решает владелец, а не код.
+        duplicated = out.loc[out["cycle_uid"].duplicated(keep=False), key_col]
+        examples = sorted({str(v) for v in duplicated})[:5]
+        raise ValueError(
+            f"cycle_uid is not unique; source identifier is duplicated: "
+            f"{len(duplicated)} строк с повторяющимся {key_col} "
+            f"(примеры: {', '.join(examples)})"
+        )
     return out
 
 

@@ -89,8 +89,17 @@ replay.
 3. Агентам разрешено читать только `data/processed/agent_packets/`. Файлы OPU,
    crosswalk, исходные таблицы и локальные результаты с ID/ФИО не передавать агентам.
 4. Запусти роли по порядку: kpi-analyst, incubator-forensics, consumable-lots-forensics,
-   pgt-forensics, dt-narrator для review-list, затем lead-analyst. Все промежуточные
-   роли используют Haiku; lead-analyst — Opus.
+   pgt-forensics, clinical-context-analyst, dt-narrator для review-list, затем
+   lead-analyst. Промежуточные роли используют Haiku; исключение —
+   clinical-context-analyst на Sonnet (владелец, 2026-07-31: интерпретация
+   клинического слоя сложнее однотипного объяснения лабораторных чисел —
+   разные знаменатели у каждого поля, две популяции у причины завершения,
+   обратная причинность дозы); lead-analyst — Opus.
+   clinical-context-analyst запускай только если в `analysis_bundle.json` заполнен
+   `cohort.clinical_context` (сейчас это Fertimed: описательные поля выгрузки 1С —
+   протокол стимуляции, доза ФСГ, триггер, дни МЦ, МКБ-10, КАФ, причина завершения
+   программы). Пустой блок — не сбой: у остальных клиник этих полей в выгрузке нет,
+   роль просто пропускается.
    Для dt-narrator: возьми список `cycle_uid` из `review_list.csv` (он же в
    `analysis_bundle.json`), раздели его на пачки по 8–10 и вызови dt-narrator один раз на
    каждую пачку, передав ей в задании ровно её список `cycle_uid` (не по одному вызову на
@@ -118,6 +127,7 @@ replay.
 
 Основные результаты: `dt_predictions.csv`, `OPU_table_enriched.xlsx`,
 `review_list.csv`, `miri_events.csv`, `lot_events.csv`, `pgt_summary.csv`,
+`clinical_context.csv` (только у клиник с описательными клиническими полями),
 `pgt_embryo_events.csv`, `ozema_cycles.csv`,
 `ozema_genetic_counseling_candidates.csv`, `DT_Analytics_Report.xlsx`,
 `DT_Analytics_Report.html` (вкладки: Обзор, KPI эмбриологов, KPI врачей, Модели и
