@@ -203,6 +203,14 @@ def summarize_embryos(embryos: list[dict]) -> dict:
     return summary
 
 
+def _parse_cohort_date(value):
+    """DD.MM.YYYY (real exports) first, else generic/ISO fallback (tests, pre-parsed
+    Timestamps) — a bare ``dayfirst=True`` also mis-swaps unambiguous YYYY-MM-DD
+    strings, so the explicit format must be tried before falling back."""
+    ts = pd.to_datetime(value, format="%d.%m.%Y", errors="coerce")
+    return ts if pd.notna(ts) else pd.to_datetime(value, errors="coerce")
+
+
 def _pick_cycle_uid(candidates: list[dict], report_date, date_col_opu="Date OPU",
                      date_col_et="Date ET", slack_days: int = 30):
     """Disambiguate a name match against a patient's repeat attempts by report date."""
@@ -213,8 +221,8 @@ def _pick_cycle_uid(candidates: list[dict], report_date, date_col_opu="Date OPU"
         return None, "ambiguous_name_no_report_date"
     scored = []
     for c in candidates:
-        opu = pd.to_datetime(c.get(date_col_opu), errors="coerce")
-        et = pd.to_datetime(c.get(date_col_et), errors="coerce")
+        opu = _parse_cohort_date(c.get(date_col_opu))
+        et = _parse_cohort_date(c.get(date_col_et))
         if pd.isna(opu):
             continue
         window_end = (et if not pd.isna(et) else opu) + pd.Timedelta(days=slack_days)

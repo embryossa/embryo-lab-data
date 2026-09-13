@@ -30,9 +30,9 @@ HTML/XLSX-отчёт с итоговой клинической интерпре
 4. **Лабораторные KPI** (`src/embryo/kpi.py`) по методологии Vienna Consensus
    + отдельный `Model_KPIScore`, который точно повторяет формулу обучения
    модели (не путать с лабораторным KPI).
-5. **Внешние модели** запускаются автоматически в своих окружениях
-   (`src/embryo/_launch.py`, `dt_runner.py`, `tabpfn_runner.py`,
-   `tabpfn_regression_runner.py`, `dnn_runner.py`):
+5. **Внешние модели** запускаются автоматически: IVF Digital Twin — через REST API
+   службы 7.1 (`src/embryo/dt_api.py`), остальные — в своих окружениях
+   (`src/embryo/_launch.py`, `tabpfn_runner.py`, `tabpfn_regression_runner.py`, `dnn_runner.py`):
    - **IVF Digital Twin** — ансамбль из 7 моделей (MC pipeline, Bayes,
      KAT, GAT, CSDI, TabPFN/PRAI, итоговый BEFE-ансамбль `DIGITAL TWIN`);
    - **TabPFN** — вероятность беременности на перенос (`PRAI`) с CI;
@@ -105,7 +105,7 @@ src/embryo/         ядро пайплайна (ingest, normalize, kpi, incubat
                     pgt, ozema, analytics, reconcile, contracts, privacy,
                     report, *_runner.py — адаптеры внешних инструментов)
 scripts/            run_analysis.py (оркестратор), finalize_report.py,
-                    check_setup.py, run_pipeline.py
+                    preflight.py, check_setup.py
 .claude/            skill /run-analysis, роли-агенты (Haiku/Opus), прочие
                     project skills (dt-ensemble, vienna-kpi, ozema, ...)
 tests/               pytest: синтетические фикстуры, e2e replay, контракты
@@ -171,8 +171,53 @@ copy config\clinics\fertimed\settings.local.yaml.example config\clinics\fertimed
 
 ### 3. Внешние инструменты (устанавливаются/копируются отдельно, не из этого репо)
 
-- **IVF Digital Twin** — `RUN_BATCH.bat` в своём проекте
-  (`external_tools.digital_twin.project_dir`).
+- **IVF Digital Twin** — 7.1 через локальный REST API (раздел ниже), единственный
+  вход DT для всех клиник. Батч 7.0 (`RUN_BATCH.bat`) снят 2026-09-13.
+
+#### Digital Twin 7.1 через API
+
+Вместо запуска скриптов внешнего проекта и поиска свежего `dt_analytics_*.csv`
+пайплайн отправляет пакет в службу Windows `IVFClinicIntegration71` (приложение
+IVF Digital Twin 7.1) и забирает готовые строки (`src/embryo/dt_api.py`).
+Приложение при расчёте может быть закрыто.
+
+1. В 7.1: **Настройка → Подключение МИС / ЛИС — REST API** → служба установлена
+   и работает → тип подключения **«Аналитика»** → **Создать подключение и ключ**.
+2. Сохраните ключ под DPAPI своей учётной записи Windows (в файлах и конфиге он
+   не хранится открытым текстом):
+   `$env:PYTHONPATH="src"; python -m embryo.dt_api store-key`
+3. В `config/machine.local.yaml`: `digital_twin.api.ca_cert` (см. `.example`);
+   политика пакета (`n_sim`, `timepoints`, `impute`, `fallback_to_retrieval`) уже
+   задана в `settings.yaml` каждой клиники. Проверка: `python -m embryo.dt_api health` и
+   `python scripts\preflight.py`.
+
+Любая клиника запускается одинаково: `python scripts\run_analysis.py --clinic fertimed`
+(`preflight.py` и `check_setup.py` тоже проверяют только API 7.1). Перед полным прогоном —
+сухая проверка `... --dt-check`: служба проверяет выгрузку без
+расчёта (строки, которые будут отклонены, оценка времени), `data/processed` не меняется.
+
+В службу уходят только `cycle_uid` и числовые признаки; `_key`, ID, ФИО и даты
+остаются локально. На каждый цикл запрашиваются две точки: `transfer` (все
+наблюдения выгрузки → `DIGITAL TWIN`, `p_*`, BEFE) и `retrieval` (только ОКК и MII,
+как батч 7.0 → `med_*`/`p025_*`/`p975_*` для сравнения воронки с фактом, плюс
+`DIGITAL TWIN (retrieval)` для сопоставления с отчётами 7.0). Обязательные
+признаки API сам не заполняет: АМГ/ИМТ подставляет `normalize.py`
+(`amh_imputed`/`bmi_imputed`), КАФ — из `afc` → `clin_afc` → фолликулы →
+константа (`afc_source`), попытка — 1 (`attempt_imputed`), источник спермы — по
+карте токенов (`sperm_source_inferred`). Правила владельца (2026-09-13) для строк, которые 7.1 не
+принимает как есть: MII > ОКК означает добавленные размороженные ооциты, модели
+передаётся ОКК = MII (`okk_raised_for_thawed`, фактические ОКК в отчёте и KPI не
+меняются). При другом противоречии стадий (2PN > MII, Bl > 2PN, хорошие > Bl) точка
+`transfer` получает `dt_api_status=invalid`, и вся строка значений берётся из точки
+`retrieval` (`dt_timepoint_used=retrieval_fallback`). Отключаются
+`api.fallback_to_retrieval: false` и `api.impute.okk_for_thawed_oocytes: false`.
+Без прогноза остаются только строки без обязательного признака, который нечем
+подставить (возраст). Сводка источника — `run_manifest.json → digital_twin`,
+полный ответ для replay — `local_private/dt71_api_output.csv`
+(`--dt-output` этого файла).
+TabPFN получает как опорное значение `dt_compare` DIGITAL TWIN именно этого прогона
+(`local_private/model_input_tabpfn.xlsx`), а не колонку выгрузки; в признаки TabPFN
+это значение не входит.
 - **TabPFN batch-адаптер** — скопируйте `external/tabpfn/run_tabpfn_batch.py`
   и `.bat` в окружение TabPFN на новой машине, см. `docs/TABPFN_INSTALL.md`.
 - **TabPFN-3 regression** — отдельный проект/venv с

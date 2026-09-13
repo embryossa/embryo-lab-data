@@ -31,6 +31,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from .normalize import parse_dates
+
 # Префиксы колонок описательного клинического слоя. Всё, что не начинается с них,
 # этот модуль не трогает.
 CLINICAL_PREFIXES = ("clin_", "stim_")
@@ -48,8 +50,9 @@ PACKET_COLUMNS = [
     "clin_dx_groups_all",
 ]
 
-# Даты в выгрузке 1С приходят строками "дд.мм.гггг"; dayfirst обязателен, иначе
-# 05.06.2026 прочитается как 6 мая.
+# Даты в выгрузке 1С приходят строками "дд.мм.гггг": без dayfirst 05.06.2026
+# прочиталось бы как 6 мая. Разбор идёт через normalize.parse_dates — он держит
+# оба формата, потому что тот же кадр может прийти уже переписанным в ISO.
 _DATE_COLUMNS = ("clin_cycle_start_date", "clin_lmp_date")
 
 _CODE_SPLIT_RE = re.compile(r"[;,]")
@@ -130,7 +133,7 @@ def _num(frame: pd.DataFrame, column: str) -> pd.Series:
 def _dates(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame.columns:
         return pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns]")
-    return pd.to_datetime(frame[column], errors="coerce", dayfirst=True)
+    return parse_dates(frame[column])
 
 
 def build_cycle_frame(frame: pd.DataFrame, groups: dict) -> pd.DataFrame:

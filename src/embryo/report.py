@@ -15,6 +15,7 @@ from scipy.stats import mannwhitneyu, norm, pearsonr, spearmanr, wilcoxon
 
 from ._io import atomic_write_text
 from . import kpi
+from .normalize import parse_dates
 from . import ozema
 
 try:
@@ -1321,10 +1322,10 @@ function journalFilter(input){
 
 
 def _ru_date(ts) -> str:
-    # format="mixed" lets pandas infer per-value: raw OPU dates are DD.MM.YYYY,
-    # but values already parsed upstream (e.g. by Digital Twin) round-trip as
-    # ISO YYYY-MM-DD -- dayfirst=True alone warns on that mix.
-    t = pd.to_datetime(pd.Series([ts]), errors="coerce", dayfirst=True, format="mixed").iloc[0]
+    # Смесь форматов: сырые даты OPU — DD.MM.YYYY, а уже прошедшие через
+    # пайплайн возвращаются в ISO. dayfirst=True (даже с format="mixed")
+    # переставляет день и месяц в ISO — см. normalize.parse_dates.
+    t = parse_dates([ts]).iloc[0]
     return "—" if pd.isna(t) else f"{t.day} {_RU_MONTH.get(t.month, '')}"
 
 
@@ -1431,7 +1432,7 @@ def _pregnancy_journal_tab(analytics_result: dict, regression_qc_frame: pd.DataF
     repeat_counts = df_u[id_col].value_counts() if id_col else pd.Series(dtype=int)
     n_repeat_patients = int((repeat_counts > 1).sum())
     n_incomplete = int(prai.isna().sum())
-    dates = (pd.to_datetime(df_u["Date OPU"], errors="coerce", dayfirst=True, format="mixed")
+    dates = (parse_dates(df_u["Date OPU"])
             if "Date OPU" in df_u.columns else pd.Series([], dtype="datetime64[ns]")).dropna()
     period_txt = (f"{_ru_date(dates.min())} – {_ru_date(dates.max())} {int(dates.max().year)}"
                  if not dates.empty else "—")
@@ -1461,8 +1462,7 @@ def _pregnancy_journal_tab(analytics_result: dict, regression_qc_frame: pd.DataF
 
     sorted_df = df_u.copy()
     if "Date OPU" in sorted_df.columns:
-        sorted_df["_journal_sort"] = pd.to_datetime(sorted_df["Date OPU"], errors="coerce",
-                                                    dayfirst=True, format="mixed")
+        sorted_df["_journal_sort"] = parse_dates(sorted_df["Date OPU"])
         sorted_df = sorted_df.sort_values("_journal_sort", ascending=False)
     header = ("<tr><th>№</th><th>Дата</th><th>Пациентка</th><th>Возраст · АМН · BMI</th>"
              "<th>Воронка: фолликулы → ООК → MII → 2PN → бласт → хор.бласт</th>"
@@ -1775,7 +1775,11 @@ def _ozema_table(ozema_cycles: pd.DataFrame) -> str:
     if ozema_cycles is None or ozema_cycles.empty:
         return "<p class='muted'>нет данных OZEMA в этом прогоне</p>"
     d = ozema_cycles.copy()
-    d["OZEMA flag"] = d.get("ozema_flag", "").map(lambda f: _badge(str(f), _ozema_flag_kind(str(f))))
+    # Значение по умолчанию должно быть Series, а не "": DataFrame.get на
+    # отсутствующей колонке вернул бы голую строку, и .map ниже падал бы
+    # AttributeError вместо задуманного пустого столбца флагов.
+    flags = d["ozema_flag"] if "ozema_flag" in d.columns else pd.Series("", index=d.index)
+    d["OZEMA flag"] = flags.map(lambda f: _badge(str(f), _ozema_flag_kind(str(f))))
     display_cols = {
         "patient_name": "Пациент", "patient_id": "ID", "date_opu": "Date OPU", "age": "Возраст",
         "COC": "COC", "MII": "MII", "2PN": "2PN", "Cleav": "Cleav", "Bl": "Bl",

@@ -117,10 +117,11 @@ def check_external_tools(clinic: str | None) -> list[str]:
 
     tools = cfg.get("external_tools", {}) or {}
     problems: list[str] = []
+    # Digital Twin — только 7.1 через REST API, для всех клиник (батч 7.0 снят 2026-09-13).
+    problems += check_digital_twin_api(tools.get("digital_twin") or {})
 
     # (секция, человекочитаемое имя, гейт, обязательные пути)
     checks = [
-        ("digital_twin", "Digital Twin", "launch", ["project_dir", "results_dir"]),
         ("tabpfn", "TabPFN", "launch", ["project_dir", "results_dir"]),
         ("dnn_verifier", "DNN (EVO)", "enabled", ["project_dir", "model_path", "scaler_path"]),
         ("tabpfn_regression", "TabPFN-3 regression", "enabled", ["project_dir"]),
@@ -140,6 +141,25 @@ def check_external_tools(clinic: str | None) -> list[str]:
             else:
                 print(f"  ok  {label}: {key}")
     return problems
+
+
+def check_digital_twin_api(dt_cfg: dict) -> list[str]:
+    """7.1 через REST API: сертификат, ключ под DPAPI и живой авторизованный ответ службы.
+
+    Сетевой вызов только на заданный локальный адрес службы; данных пациентов не содержит.
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    from embryo import dt_api
+    try:
+        client = dt_api.DTApiClient.from_config(dt_api.api_settings(dt_cfg))
+        health = client.health()
+        if health.get("status") != "ready":
+            return [f"Digital Twin API: служба ответила {health} (лицензия 7.1?)"]
+        client._call("GET", "/analytics/batches")
+    except Exception as exc:
+        return [f"Digital Twin API: {type(exc).__name__}: {exc}"]
+    print(f"  ok  Digital Twin 7.1 API: {client.url} (ключ «Аналитика» принят)")
+    return []
 
 
 def main() -> int:

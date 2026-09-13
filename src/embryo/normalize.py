@@ -14,6 +14,29 @@ def _norm(x) -> str:
     return str(x).strip().lower() if pd.notna(x) else ""
 
 
+def parse_dates(values) -> pd.Series:
+    """Разобрать даты, встречающиеся в этом пайплайне ДВУХ разных видов.
+
+    Сырые выгрузки МИС дают "дд.мм.гггг" — для них нужен ``dayfirst=True``.
+    Но всё, что пайплайн уже записал и читает обратно (dt_predictions.csv,
+    regression_qc.csv, OPU_table_enriched.xlsx), приходит в ISO ``ГГГГ-ММ-ДД``,
+    а ``dayfirst=True`` переставляет местами день и месяц И В НЁМ: pandas 3.0.3
+    разбирает "2026-01-05" как 1 мая. ``format="mixed"`` от этого не спасает —
+    проверено на pandas 3.0.3. Молча, без исключения: страдает каждая дата с
+    днём ≤ 12, то есть примерно 40% строк.
+
+    Поэтому однозначный ISO разбирается ПЕРВЫМ, и только на том, что им не
+    разобралось, применяется dayfirst. Тот же приём уже описан в
+    ``pgt._parse_cohort_date`` — здесь он вынесен в одно место на весь пакет.
+    """
+    series = values if isinstance(values, pd.Series) else pd.Series(values)
+    iso = pd.to_datetime(series, errors="coerce", format="ISO8601")
+    if iso.notna().all():
+        return iso
+    fallback = pd.to_datetime(series, errors="coerce", dayfirst=True, format="mixed")
+    return iso.fillna(fallback)
+
+
 def outcome_to_binary(series: pd.Series, outcome_cfg: dict) -> pd.Series:
     aff = set(_norm(m) for m in outcome_cfg.get("affirmative_exact", []))
     neg = set(_norm(m) for m in outcome_cfg.get("negative_exact", []))

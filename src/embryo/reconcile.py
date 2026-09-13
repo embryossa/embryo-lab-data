@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 
 import numpy as np
 import pandas as pd
@@ -10,7 +9,6 @@ import pandas as pd
 from ._io import atomic_write_csv, atomic_write_excel
 from .contracts import (DT_PREDICTIONS, TABPFN_OUTPUT, assert_unique, normalized_key,
                         validate_binary_outcome, validate_ci)
-from .ingest import load_table
 from .privacy import add_cycle_uid, build_crosswalk
 
 
@@ -159,29 +157,6 @@ def enrich_opu_table(opu: pd.DataFrame, predictions: pd.DataFrame) -> pd.DataFra
     return out.drop(columns=["_join", *[f"__pred_{c}" for c in fields]])
 
 
-def build_review_list(predictions: pd.DataFrame,
-                      analytics_review: pd.DataFrame | None = None,
-                      priority_cutoff: int = 2) -> pd.DataFrame:
-    """Union analytics review cases with every TabPFN interval wider than threshold."""
-    assert_unique(predictions, "patient_id", "dt_predictions")
-    selected_keys: set[str] = set(
-        normalized_key(
-            predictions.loc[predictions["ci_wide"].fillna(False), "patient_id"],
-            "ci_wide.patient_id",
-        ).tolist()
-    )
-    if analytics_review is not None and not analytics_review.empty:
-        key = _find_col(analytics_review, ("patient_id", "_key", "ID"), "analytics review")
-        selected = analytics_review
-        if "priority" in selected.columns:
-            priority = pd.to_numeric(selected["priority"], errors="coerce")
-            selected = selected.loc[priority.le(priority_cutoff)]
-        if not selected.empty:
-            selected_keys.update(normalized_key(selected[key], "analytics review").tolist())
-    prediction_keys = normalized_key(predictions["patient_id"], "dt_predictions.patient_id")
-    return predictions.loc[prediction_keys.isin(selected_keys)].copy()
-
-
 def write_reconciled_outputs(predictions: pd.DataFrame, opu: pd.DataFrame,
                              predictions_path: str | Path,
                              opu_path: str | Path,
@@ -197,46 +172,3 @@ def write_reconciled_outputs(predictions: pd.DataFrame, opu: pd.DataFrame,
     else:
         outputs["opu"] = atomic_write_excel({"OPU table": opu}, opu_path)
     return outputs
-
-
-# Backward-compatible helpers used by the earlier orchestrator.
-def reconcile(dt_path: str, opu_path: str, dt_key="_key",
-              dt_key_fallback="patient_id", opu_key="ID") -> pd.DataFrame:
-    dt = load_table(dt_path)
-    opu = load_table(opu_path)
-    d = _with_join_key(dt, _find_col(dt, (dt_key, dt_key_fallback), "DT"), "DT")
-    o = _with_join_key(opu, opu_key, "OPU")
-    result = d.merge(o, on="_join", how="inner", suffixes=("_dt", "_opu"),
-                     validate="one_to_one")
-    preg_col = "Preg_dt" if "Preg_dt" in result.columns else "Preg"
-    return result.loc[result[preg_col].notna()].copy() if preg_col in result else result
-
-
-def _parse_ci_width_pp(val) -> float:
-    if pd.isna(val):
-        return np.nan
-    values = re.findall(r"\d+(?:[.,]\d+)?", str(val))
-    nums = [float(x.replace(",", ".")) for x in values]
-    return abs(nums[1] - nums[0]) if len(nums) >= 2 else (nums[0] if nums else np.nan)
-
-
-def add_ci_width(df: pd.DataFrame, tabpfn_path: str | None = None,
-                 ci_col="PRAI CI (TabPFN), %", threshold_pp: float = 20.0,
-                 key="patient_id") -> pd.DataFrame:
-    out = df.copy()
-    if tabpfn_path:
-        tab = load_table(tabpfn_path)
-        TABPFN_OUTPUT.validate(tab)
-        t = _with_join_key(tab, key, "TabPFN")
-        t["ci_width_pp"] = (pd.to_numeric(t["ci_high"], errors="coerce")
-                            - pd.to_numeric(t["ci_low"], errors="coerce")) * 100
-        if "_join" not in out:
-            out["_join"] = normalized_key(out[key], "analytics")
-        out = out.merge(t[["_join", "ci_width_pp"]], on="_join", how="left",
-                        validate="one_to_one")
-    elif "ci_width_pp" not in out and ci_col in out:
-        out["ci_width_pp"] = out[ci_col].map(_parse_ci_width_pp)
-    if "ci_width_pp" not in out:
-        out["ci_width_pp"] = np.nan
-    out["ci_wide"] = pd.to_numeric(out["ci_width_pp"], errors="coerce").gt(threshold_pp).fillna(False)
-    return out

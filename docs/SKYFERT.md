@@ -18,7 +18,7 @@ DT/TabPFN, не строит HTML).
 Fertimed, `src/embryo/clinics/fertimed.py` не используется и не изменялся ни
 в каком виде — общие с остальным проектом только *генерические* модули
 (`ingest.py`, `normalize.py`, `kpi.py`, `ozema.py`, `privacy.py`, `_io.py`,
-`dt_runner.py`, `tabpfn_runner.py`, `reconcile.py`, `analytics.py`,
+`dt_api.py`, `tabpfn_runner.py`, `reconcile.py`, `analytics.py`,
 `report.py`, `contracts.py`), не содержащие кода, специфичного ни для
 Fertimed, ни для клиники A.
 

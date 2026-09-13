@@ -18,15 +18,29 @@ paths:
   opu_table: "data/inbox/ggrc/OPU_table.xlsx"      # обычно не существует -> используется inbox_dir файл
 
 external_tools:
-  # Тот же внешний проект IVF Digital Twin, что и у клиники A/Fertimed —
-  # фильтрация по "_key" в run_analysis.py уже изолирует строки этого прогона.
   digital_twin:
-    launch: true
-    mode: batch
-    project_dir: ""
-    run_cmd: 'RUN_BATCH.bat {input}'
-    input_target: ""
-    results_dir: ""
+    # IVF Digital Twin 7.1 — ЕДИНСТВЕННЫЙ вход DT для всех клиник (владелец, 2026-09-13):
+    # пакет циклов уходит в локальную службу IVFClinicIntegration71 (подключение
+    # «Аналитика», src/embryo/dt_api.py). Батч 7.0 (RUN_BATCH.bat) снят. Машинное —
+    # ca_cert (и при необходимости url/key_file) — в config/machine.local.yaml.
+    api:
+      url: "https://127.0.0.1:8843/api/v1"
+      n_sim: 2000
+      poll_seconds: 15
+      timeout_minutes: 720          # benchmark ~980 расчётов при 25-35 с на расчёт
+      keep_batches: false
+      # transfer — все наблюдения -> вероятности; retrieval — только ОКК/MII -> воронка med_*.
+      timepoints: [transfer, retrieval]
+      # Владелец 2026-09-13: точка transfer отклонена (противоречие стадий) ->
+      # DIGITAL TWIN из точки retrieval, флаг dt_timepoint_used=retrieval_fallback.
+      fallback_to_retrieval: true
+      impute:
+        afc_columns: [afc, clin_afc]
+        afc_from_follicles: true
+        afc_constant: 12
+        attempt: 1
+        # MII > ОКК = добавлены размороженные ооциты: ОКК для модели = MII (флаг okk_raised_for_thawed).
+        okk_for_thawed_oocytes: true
   tabpfn:
     launch: true
     mode: batch

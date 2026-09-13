@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 if sys.platform == "win32":
@@ -23,7 +24,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from embryo import (analytics, clinical, consult, contracts, dnn_runner, dt_runner, history,
+from embryo import (analytics, clinical, consult, contracts, dnn_runner, dt_api, history,
                     incubator, ingest, kpi, lots, normalize, opu_table, ozema, pgt, privacy,
                     reconcile, regression_qc, report, tabpfn_regression_runner,
                     tabpfn_runner)  # noqa: E402
@@ -85,6 +86,12 @@ def _settings(config_dir: Path) -> dict:
         with local.open(encoding="utf-8") as stream:
             _merge(cfg, yaml.safe_load(stream) or {})
     return cfg
+
+
+def describe_dt_source(cfg: dict) -> str:
+    """Digital Twin для всех клиник — только 7.1 через REST API (батч 7.0 снят 2026-09-13)."""
+    api_cfg = dt_api.api_settings((cfg.get("external_tools") or {}).get("digital_twin"))
+    return f"IVF Digital Twin 7.1 через REST API ({api_cfg.get('url') or 'https://127.0.0.1:8843/api/v1'})"
 
 
 def _project_path(value: str | Path) -> Path:
@@ -320,17 +327,44 @@ def _prepare_opu(cfg: dict, input_path: Path, columns_cfg: dict, clinic: str | N
     return deduped
 
 
-def _read_dt(path: str | None, cfg: dict, model_input: Path) -> pd.DataFrame:
+def _read_dt(path: str | None, cfg: dict, model_source: pd.DataFrame,
+             private: Path | None = None) -> pd.DataFrame:
     if path:
         frame = ingest.load_table(str(_project_path(path)))
         contracts.DT_OUTPUT.validate(frame)
         return frame
-    dt_cfg = cfg["external_tools"]["digital_twin"]
-    target = dt_cfg.get("input_target")
-    if target:
-        Path(target).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(model_input, target)
-    return dt_runner.launch_and_read(dt_cfg, str(model_input))
+    # IVF Digital Twin 7.1 — пакет через локальный REST API, одинаково для всех клиник.
+    # Результат относится только к этому прогону (пакет создаётся заново), поэтому
+    # поиск «самого свежего csv» и фильтр накопленной истории здесь не нужны.
+    frame = dt_api.run_digital_twin_api(model_source, cfg["external_tools"]["digital_twin"])
+    contracts.DT_OUTPUT.validate(frame)
+    if private is not None:
+        # _key содержит паспортный ID + дату -> только local_private. Файл годится
+        # для детерминированного replay: --dt-output <этот путь>.
+        saved = _io.atomic_write_csv(frame, private / "dt71_api_output.csv")
+        print(f"[dt-api] результат 7.1 сохранён для replay: {saved}")
+    return frame
+
+
+def _tabpfn_input_with_fresh_dt(model_input: pd.DataFrame, dt: pd.DataFrame, private: Path) -> tuple[Path, int]:
+    """Вход TabPFN с DIGITAL TWIN ЭТОГО прогона вместо колонки выгрузки.
+
+    TabPFN пишет DIGITAL TWIN в журнал как опорное значение dt_compare (в признаки модели
+    колонка не входит). В выгрузке там лежат старые значения, когда-то вписанные в OPU-таблицу,
+    поэтому подставляется свежий выход Digital Twin по _key. Если DT по циклу прогноза не дал,
+    остаётся пусто — старое число выгрузки за текущий прогноз не выдаётся.
+    Возвращает (путь, число циклов со свежим DIGITAL TWIN).
+    """
+    frame = model_input.copy()
+    fresh = pd.Series(dtype="float64")
+    if {"_key", "DIGITAL TWIN"} <= set(dt.columns):
+        keys = dt["_key"].astype("string").str.strip().str.upper()
+        fresh = pd.Series(pd.to_numeric(dt["DIGITAL TWIN"], errors="coerce").to_numpy(), index=keys)
+        fresh = fresh[~fresh.index.duplicated()]
+    frame_keys = frame["_key"].astype("string").str.strip().str.upper()
+    frame["DIGITAL TWIN"] = frame_keys.map(fresh).astype("float64").to_numpy()
+    path = _io.atomic_write_excel({"model_input": frame}, private / "model_input_tabpfn.xlsx")
+    return Path(path), int(frame["DIGITAL TWIN"].notna().sum())
 
 
 def _read_tabpfn(path: str | None, cfg: dict, model_input: Path) -> pd.DataFrame:
@@ -350,6 +384,45 @@ def _join_dnn(predictions: pd.DataFrame, dnn: pd.DataFrame | None) -> pd.DataFra
     right = right[keep].rename(columns={"Вероятность положительного исхода": "DNN"})
     out = left.merge(right, on="__dnn_key", how="left", validate="one_to_one")
     return out.drop(columns="__dnn_key")
+
+
+def _dnn_input_with_bl_imputation(model_input_path: Path, clean_regression: pd.DataFrame | None,
+                                  dcfg: dict, private_dir: Path) -> tuple[Path, int]:
+    """Заполняет "Число Bl" в строках, где 1С его не дала (криоперенос), значением из
+    P50 прогноза TabPFN-3 regression — ТОЛЬКО для входа DNN, чтобы Evo_calculations.py
+    не отбрасывал эти циклы. "Частота формирования бластоцист" DNN пересчитывает сам
+    из "Число Bl"/"2 pN". Vienna KPI/OZEMA этот файл не читают; ноль как замена
+    пропуска не используется — подставляется модельная оценка. Возвращает
+    (path, n_imputed); при выключенном гейте или отсутствии регрессии — исходный путь.
+    """
+    if not dcfg.get("impute_bl_from_regression", False) or clean_regression is None:
+        return model_input_path, 0
+    bl_col = "Число Bl"
+    frame = pd.read_excel(model_input_path)
+    if bl_col not in frame.columns or "cycle_uid" not in frame.columns:
+        return model_input_path, 0
+    p50_col = next((c for c in ("TPFN3_blasts_after_fert_p50", "TPFN3_blasts_early_p50")
+                    if c in clean_regression.columns), None)
+    if p50_col is None:
+        return model_input_path, 0
+    est = clean_regression[["cycle_uid", p50_col]].rename(columns={p50_col: "_bl_p50"})
+    merged = frame.merge(est, on="cycle_uid", how="left", validate="one_to_one")
+    two_pn = pd.to_numeric(merged.get("2 pN"), errors="coerce")
+    bl_p50 = pd.to_numeric(merged["_bl_p50"], errors="coerce").round().clip(lower=0)
+    # бластоцист не больше, чем 2pN
+    bl_p50 = pd.concat([bl_p50, two_pn], axis=1).min(axis=1)
+    need = merged[bl_col].isna() & bl_p50.notna()
+    merged.loc[need, bl_col] = bl_p50[need]
+    n_imputed = int(need.sum())
+    if n_imputed == 0:
+        return model_input_path, 0
+    merged["bl_ml_fallback"] = need
+    merged = merged.drop(columns="_bl_p50")
+    out_path = private_dir / "model_input_dnn.xlsx"
+    _io.atomic_write_excel({"model_input": merged}, out_path)
+    print(f"[model-input] DNN: 'Число Bl' импутировано из P50 regression у {n_imputed} "
+          f"криопереносных строк -> {out_path.name}")
+    return out_path, n_imputed
 
 
 def _records(frame: pd.DataFrame | None) -> list[dict]:
@@ -486,6 +559,10 @@ def _agent_packet(ares: dict, miri_summary: pd.DataFrame, miri_events: pd.DataFr
     allowed = [
         "age", "Age", "Preg", "PRAI", "DIGITAL TWIN", "DNN", "ci_width_pp", "ci_wide",
         "priority", "reason", "p_per_transfer", "p_kat_raw", "p_nvsa", "p_csdi",
+        # Digital Twin 7.1: из какой точки прогноз строки и была ли поправка ОКК на
+        # размороженные ооциты — без этого агент прочитал бы запасной прогноз
+        # «после пункции» как прогноз на день переноса.
+        "dt_timepoint_used", "okk_raised_for_thawed",
         "OCC", "MII", "2pN", "Bl", "Good Bl", "event_count", "warning_count",
         "critical_count", "gap_count", "max_severity", "warning", "miri_events",
         "n_items_tracked", "n_items_changed", "changed_items", "lot_change_flag",
@@ -560,6 +637,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="ярлык для --clinic fertimed")
     parser.add_argument("--ggrc", action="store_true",
                         help="ярлык для --clinic ggrc")
+    parser.add_argument("--dt-check", action="store_true",
+                        help="сухая проверка входа Digital Twin 7.1: служба проверяет пакеты без "
+                             "расчёта; TabPFN/DNN/отчёты не запускаются, data/processed не меняется")
     args = parser.parse_args(argv)
     if args.fertimed and not args.clinic:
         args.clinic = "fertimed"
@@ -569,6 +649,17 @@ def main(argv: list[str] | None = None) -> int:
     os.chdir(ROOT)
     config_dir = ROOT / "config" if not args.clinic else ROOT / "config" / "clinics" / args.clinic
     cfg = _settings(config_dir)
+    print(f"[digital-twin] {describe_dt_source(cfg)}")
+    check_dir = None
+    if args.dt_check:
+        # Промежуточные файлы до шага DT (kpi_computed, model_input, OZEMA...) уходят во
+        # временную папку: сухая проверка не должна перезаписывать результаты прогонов.
+        check_dir = Path(tempfile.mkdtemp(prefix="dt-check-"))
+        for key in ("processed_dir", "local_private_dir", "agent_packets_dir"):
+            cfg["paths"][key] = str(check_dir / key)
+        cfg["privacy"]["crosswalk_file"] = str(check_dir / "crosswalk.csv")
+        if not _project_path(cfg["privacy"]["secret_file"]).is_file():
+            cfg["privacy"]["secret_file"] = str(check_dir / "cycle_uid.key")
     columns_cfg = ingest.load_config(str(config_dir / "columns.yaml"))
     input_path = _input_path(cfg, args.input)
     processed = _project_path(cfg["paths"]["processed_dir"])
@@ -698,52 +789,39 @@ def main(argv: list[str] | None = None) -> int:
                           packets / "schema_diagnostic.json")
 
     opu = _prepare_opu(cfg, input_path, columns_cfg, clinic=args.clinic)
-    dt = _read_dt(args.dt_output, cfg, model_input_path)
+    if args.dt_check:
+        summary = dt_api.check_digital_twin_api(model_source, cfg["external_tools"]["digital_twin"])
+        shutil.rmtree(check_dir, ignore_errors=True)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        print(f"[dt-check] циклов {summary['cycles']}, расчётов к выполнению {summary['calculations']} "
+              f"(~{summary['estimated_hours']} ч), отклонено строк {len(summary['invalid'])}; "
+              f"DIGITAL TWIN: {summary['dt_coverage']}. "
+              "data/processed не изменён.")
+        return 0
+    dt = _read_dt(args.dt_output, cfg, model_source, private=private)
+    dt_source = (dt_api.run_summary(dt) if "dt_api_status" in dt.columns
+                 else {"source": "replay --dt-output без полей API 7.1"})
     if "_key" in dt.columns:
-        # DT's own "ready" export accumulates every patient it has ever processed
-        # (see dt_runner.read_dt docstring) — scope it down to this run's cycles so
-        # unrelated historical rows never enter dt_predictions.csv/review-list.
+        # Replay-файл (--dt-output) может нести строки другой когорты — оставляем
+        # только циклы этого прогона, чтобы чужие строки не попали в dt_predictions.csv.
         current_keys = set(kpi_cycles["_key"].astype("string").str.strip().str.upper())
         dt_keys = dt["_key"].astype("string").str.strip().str.upper()
         dt = dt.loc[dt_keys.isin(current_keys)].copy()
-    tab = _read_tabpfn(args.tabpfn_output, cfg, model_input_path)
+    tabpfn_input_path, n_fresh_dt = _tabpfn_input_with_fresh_dt(model_input, dt, private)
+    print(f"[tabpfn] опорный DIGITAL TWIN — выход DT этого прогона: {n_fresh_dt}/{len(model_input)} циклов")
+    tab = _read_tabpfn(args.tabpfn_output, cfg, tabpfn_input_path)
     predictions = reconcile.build_dt_predictions(
         dt, tab, opu, secret, threshold_pp=cfg["thresholds"]["tabpfn_ci_width_pp"])
-
-    dnn_frame = None
-    dnn_status = "disabled"
-    dnn_coverage: dict | None = None
-    dcfg = cfg["external_tools"].get("dnn_verifier", {})
-    if dcfg.get("enabled"):
-        # EVO — необязательная кросс-проверка (см. settings.local.yaml), не должна
-        # гейтить пайплайн: тот же мягкий паттерн, что и у tabpfn_regression ниже.
-        try:
-            dnn_frame = dnn_runner.run_dnn_verifier(dcfg, str(model_input_path))
-            dnn_status = "valid_saved_scaler"
-            predictions = _join_dnn(predictions, dnn_frame)
-            # Успешный запуск ещё не означает покрытую когорту: Evo отбрасывает
-            # строку с пропуском в любом из 18 признаков обучения, поэтому статус
-            # "valid_saved_scaler" может стоять при почти пустой колонке DNN в
-            # отчёте (Fertimed, июнь 2026: 2 строки из 34 — у криопереносов не
-            # заполнены "Число Bl"/"Число Bl хор.кач-ва"). Считаем покрытие явно,
-            # иначе молчаливо пустая колонка читается как "модель не запускалась".
-            scored = int(pd.to_numeric(predictions.get("DNN"), errors="coerce").notna().sum()) \
-                if "DNN" in predictions.columns else 0
-            dnn_coverage = {"scored": scored, "cohort": int(len(predictions))}
-            if scored < len(predictions):
-                print(f"[warn] DNN оценила {scored} из {len(predictions)} циклов когорты: "
-                      "остальные строки отброшены из-за пропусков в признаках обучения",
-                      file=sys.stderr)
-        except Exception as exc:
-            dnn_status = f"failed: {type(exc).__name__}: {exc}"
-            print(f"[warn] DNN verifier skipped: {dnn_status}", file=sys.stderr)
 
     # TabPFN-3 quantitative-stage regression: independent QA layer (actual vs P10-P90
     # per funnel stage), never the outcome-probability reconciliation above. Failure is
     # intentionally soft — this model augments DT/TabPFN/DNN, it does not gate them.
+    # Считается ДО DNN: его P50 по стадии бластоцист нужен для импутации "Число Bl"
+    # у криопереносных строк на входе DNN (dnn_verifier.impute_bl_from_regression).
     regression_status = "disabled"
     regression_qc_frame = pd.DataFrame(columns=["cycle_uid", "out_of_interval"])
     regression_calibration = pd.DataFrame(columns=["stage", "n_evaluated", "share_in_interval80", "mae_p50"])
+    clean_regression: pd.DataFrame | None = None
     rcfg = cfg["external_tools"].get("tabpfn_regression", {})
     if rcfg.get("enabled"):
         try:
@@ -759,6 +837,38 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             regression_status = f"failed: {type(exc).__name__}: {exc}"
             print(f"[warn] TabPFN-3 regression skipped: {regression_status}", file=sys.stderr)
+
+    dnn_frame = None
+    dnn_status = "disabled"
+    dnn_coverage: dict | None = None
+    dcfg = cfg["external_tools"].get("dnn_verifier", {})
+    if dcfg.get("enabled"):
+        # EVO — необязательная кросс-проверка (см. settings.local.yaml), не должна
+        # гейтить пайплайн: тот же мягкий паттерн, что и у tabpfn_regression выше.
+        try:
+            dnn_input_path, dnn_imputed = _dnn_input_with_bl_imputation(
+                model_input_path, clean_regression, dcfg, private)
+            dnn_frame = dnn_runner.run_dnn_verifier(dcfg, str(dnn_input_path))
+            dnn_status = "valid_saved_scaler"
+            predictions = _join_dnn(predictions, dnn_frame)
+            # Успешный запуск ещё не означает покрытую когорту: Evo отбрасывает
+            # строку с пропуском в любом из 18 признаков обучения, поэтому статус
+            # "valid_saved_scaler" может стоять при почти пустой колонке DNN в
+            # отчёте (Fertimed, июнь 2026: 2 строки из 34 — у криопереносов не
+            # заполнены "Число Bl"/"Число Bl хор.кач-ва"). Считаем покрытие явно,
+            # иначе молчаливо пустая колонка читается как "модель не запускалась".
+            scored = int(pd.to_numeric(predictions.get("DNN"), errors="coerce").notna().sum()) \
+                if "DNN" in predictions.columns else 0
+            dnn_coverage = {"scored": scored, "cohort": int(len(predictions))}
+            if dnn_imputed:
+                dnn_coverage["model_imputed"] = dnn_imputed
+            if scored < len(predictions):
+                print(f"[warn] DNN оценила {scored} из {len(predictions)} циклов когорты: "
+                      "остальные строки отброшены из-за пропусков в признаках обучения",
+                      file=sys.stderr)
+        except Exception as exc:
+            dnn_status = f"failed: {type(exc).__name__}: {exc}"
+            print(f"[warn] DNN verifier skipped: {dnn_status}", file=sys.stderr)
 
     enriched = reconcile.enrich_opu_table(opu, predictions)
     if args.clinic == "skyfert":
@@ -949,6 +1059,7 @@ def main(argv: list[str] | None = None) -> int:
         # Сколько циклов когорты реально получили прогноз DNN: "valid_saved_scaler"
         # сам по себе этого не говорит (см. расчёт dnn_coverage выше).
         "dnn_coverage": dnn_coverage,
+        "digital_twin": dt_source,
         "n_lab_population": int(len(lab_cycles)),
         "warnings": report_result["warnings"],
         "artifacts": {p.name: {"path": str(p), "sha256": _sha256(p)}

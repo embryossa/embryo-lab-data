@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from embryo.incubator import (
     EVENT_COLUMNS,
     analyze_patients,
-    analyze_window,
     analyze_window_events,
     compare_flagged_vs_baseline,
     cultivation_window,
@@ -102,9 +101,6 @@ def test_zero_alarm_and_values_at_setpoint_do_not_raise_warning():
     assert summary["critical_count"] == 0
     assert summary["warning"] is False
     assert summary["max_severity"] == "none"
-
-    # The compatibility wrapper exposes the same event-driven warning logic.
-    assert analyze_window(logs, times[0], days=1 / 1440)["warning"] is False
 
 
 def test_internal_cadence_gap_is_one_episode_with_missing_duration():

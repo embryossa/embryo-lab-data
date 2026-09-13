@@ -112,7 +112,11 @@ OPU master или полный `dt_predictions.csv`. Финальный XLSX/HTM
   .gitignore, общий для всех клиник — см. `config/machine.local.yaml.example`).
   Этот файл — не место для них; при переезде на новую машину меняется только
   `config/machine.local.yaml`, этот раздел не устаревает.
-- Digital Twin: проект с `RUN_BATCH.bat` — путь в `external_tools.digital_twin.project_dir`.
+- Digital Twin: только 7.1 через локальный REST API (служба `IVFClinicIntegration71`,
+  подключение «Аналитика», `src/embryo/dt_api.py`) — для всех клиник и всех команд;
+  батч 7.0 (`RUN_BATCH.bat`) снят 2026-09-13. Политика пакета — `digital_twin.api` в
+  `settings.yaml` клиники, сертификат службы — `digital_twin.api.ca_cert` в
+  `config/machine.local.yaml`, ключ — под DPAPI (`python -m embryo.dt_api store-key`).
 - TabPFN: batch adapter из `external/tabpfn/`, установленный в существующий проект TabPFN
   — путь в `external_tools.tabpfn.project_dir`.
 - TabPFN-3 regression (количественный прогноз стадий MII/2PN/Bl/Good Bl/Frozen):

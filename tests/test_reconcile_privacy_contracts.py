@@ -6,8 +6,8 @@ import pytest
 from embryo.contracts import TABPFN_OUTPUT
 from embryo.privacy import (build_crosswalk, deidentify_records,
                             write_agent_bundle)
-from embryo.reconcile import (build_dt_predictions, build_review_list,
-                              enrich_opu_table, write_reconciled_outputs)
+from embryo.reconcile import (build_dt_predictions, enrich_opu_table,
+                              write_reconciled_outputs)
 
 
 def _tables():
@@ -53,16 +53,12 @@ def test_real_join_preserves_zero_and_fills_only_missing_outcome():
     assert out["cycle_uid"].str.match(r"^CYC-[0-9A-F]{16}$").all()
 
 
-def test_reverse_join_and_review_union():
+def test_reverse_join_returns_predictions_to_the_local_opu_table():
     dt, tab, opu = _tables()
     pred = build_dt_predictions(dt, tab, opu, b"secret", threshold_pp=20)
     enriched = enrich_opu_table(opu, pred)
     assert enriched.loc[enriched["ID"] == "AB-1", "PRAI"].iloc[0] == 0
     assert "cycle_uid" in enriched
-
-    analytic = pd.DataFrame({"patient_id": ["AB-1", "AB-3"], "priority": [1, 3]})
-    review = build_review_list(pred, analytic, priority_cutoff=2)
-    assert set(review["patient_id"].str.upper()) == {"AB-1", "AB-2"}
 
 
 def test_atomic_reconciled_outputs(tmp_path):

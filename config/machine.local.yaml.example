@@ -5,7 +5,7 @@
 # реальные пути этого ПК. Это ЕДИНСТВЕННЫЙ файл, который нужно поменять при переносе
 # всего проекта (embryo-lab-data + внешние DT/TabPFN/KAN-проекты) на новую машину —
 # он подмешивается ОДИНАКОВО в обе клиники (config/settings.yaml и
-# config/clinics/*/settings.yaml), так что путь к, например, RUN_BATCH.bat
+# config/clinics/*/settings.yaml), так что путь к, например, сертификату службы DT
 # указывается один раз, а не отдельно для каждой клиники.
 #
 # config/settings.yaml и config/clinics/*/settings.yaml (версионированные, в git)
@@ -20,13 +20,17 @@
 
 external_tools:
   digital_twin:
-    # Папка внешнего проекта IVF Digital Twin (там лежит RUN_BATCH.bat).
-    project_dir: "C:/path/to/IVF Digital Twin Pro/IVF Digital Twin"
-    results_dir: "C:/path/to/IVF Digital Twin Pro/IVF Digital Twin/results"
-    # Если на этом ПК включена политика Windows NoDefaultCurrentDirectoryInPath,
-    # cmd.exe не резолвит голое имя батника через текущую директорию — тогда
-    # раскомментируйте строку с префиксом ".\":
-    # run_cmd: '.\RUN_BATCH.bat {input}'
+    # IVF Digital Twin 7.1 через локальный REST API — единственный вход DT для всех
+    # клиник (README, раздел «Digital Twin 7.1 через API»; батч 7.0 снят 2026-09-13).
+    # В 7.1: Настройка → Подключение МИС / ЛИС → тип «Аналитика» → Создать ключ; затем
+    # python -m embryo.dt_api store-key и python -m embryo.dt_api health (PYTHONPATH=src).
+    # Политика пакета (n_sim, timepoints, impute, fallback) — в версионированных
+    # settings.yaml; здесь только машинное.
+    api:
+      ca_cert: "C:/ProgramData/IVF Clinic Integration 7.1/server.crt"
+      # url: "https://127.0.0.1:8843/api/v1"     # если служба слушает другой адрес
+      # key_file: "C:/path/to/dt-api.key"         # по умолчанию %LOCALAPPDATA%/embryo-lab-data/dt-api.key
+      # sperm_source_map: {SMF: testicular_OA}   # токен выгрузки -> категория 7.1
 
   tabpfn:
     # Папка headless-батч-адаптера TabPFN (run_tabpfn_batch.py/.bat) — см.

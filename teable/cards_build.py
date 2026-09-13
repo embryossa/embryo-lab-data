@@ -117,9 +117,16 @@ def _str(v):
 
 
 def _date(v):
+    """ISO сначала, "дд.мм.гггг" — запасным ходом (см. teable_sync.iso_date).
+
+    dayfirst=True применённый к ISO переставляет день с месяцем: "2026-01-05"
+    прочиталось бы как 1 мая, и в карточке стояла бы чужая дата.
+    """
     try:
-        t = pd.to_datetime(pd.Series([v]), errors="coerce", dayfirst=True,
-                           format="mixed").iloc[0]
+        t = pd.to_datetime(pd.Series([v]), errors="coerce", format="ISO8601").iloc[0]
+        if pd.isna(t):
+            t = pd.to_datetime(pd.Series([v]), errors="coerce", dayfirst=True,
+                               format="mixed").iloc[0]
     except (ValueError, TypeError):
         return None
     return None if pd.isna(t) else t.date().isoformat()

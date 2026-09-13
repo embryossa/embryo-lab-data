@@ -26,12 +26,28 @@ external_tools:
   # project_dir/results_dir/model_path/scaler_path/run_cmd -> config/machine.local.yaml
   # (общий для всех клиник; ".\" run_cmd-фикс NoDefaultCurrentDirectoryInPath тоже там).
   digital_twin:
-    launch: true
-    mode: batch
-    project_dir: ""
-    run_cmd: 'RUN_BATCH.bat {input}'
-    input_target: ""
-    results_dir: ""
+    # IVF Digital Twin 7.1 — ЕДИНСТВЕННЫЙ вход DT для всех клиник (владелец, 2026-09-13):
+    # пакет циклов уходит в локальную службу IVFClinicIntegration71 (подключение
+    # «Аналитика», src/embryo/dt_api.py). Батч 7.0 (RUN_BATCH.bat) снят. Машинное —
+    # ca_cert (и при необходимости url/key_file) — в config/machine.local.yaml.
+    api:
+      url: "https://127.0.0.1:8843/api/v1"
+      n_sim: 2000
+      poll_seconds: 15
+      timeout_minutes: 720          # benchmark ~980 расчётов при 25-35 с на расчёт
+      keep_batches: false
+      # transfer — все наблюдения -> вероятности; retrieval — только ОКК/MII -> воронка med_*.
+      timepoints: [transfer, retrieval]
+      # Владелец 2026-09-13: точка transfer отклонена (противоречие стадий) ->
+      # DIGITAL TWIN из точки retrieval, флаг dt_timepoint_used=retrieval_fallback.
+      fallback_to_retrieval: true
+      impute:
+        afc_columns: [afc, clin_afc]
+        afc_from_follicles: true
+        afc_constant: 12
+        attempt: 1
+        # MII > ОКК = добавлены размороженные ооциты: ОКК для модели = MII (флаг okk_raised_for_thawed).
+        okk_for_thawed_oocytes: true
   tabpfn:
     launch: true
     mode: batch
@@ -49,6 +65,18 @@ external_tools:
     run_cmd: ""
     output: "data/processed/fertimed/evo_predictions.csv"
     scaler_path: ""
+    # Опция: заполнить "Число Bl" криопереносных строк (1С их не даёт) из P50
+    # прогноза TabPFN-3 regression (blasts_after_fert, clip [0..2pN]) ТОЛЬКО для
+    # входа DNN (model_input_dnn.xlsx) — чтобы Evo_calculations.py не отбрасывал
+    # ~37 из 40 циклов. Vienna KPI/OZEMA этот файл не читают; вместо 0
+    # подставляется модельная оценка, строки помечаются bl_ml_fallback=true,
+    # счётчик в run_manifest.dnn_coverage.model_imputed.
+    # ВЫКЛЮЧЕНО (владелец, 2026-09-07): при 40/40 покрытии столбец DNN на
+    # июльской когорте оказался пессимистичным и недискриминирующим (средняя
+    # вероятность у неудач 0.28 против 0.30 у беременностей, ЧНБ_прогноз EVO 5%
+    # против фактических 47.5%) — причина в самой реконструированной DNN, а не в
+    # импутации. Оставляем честный охват 3/40; код гейта сохранён на будущее.
+    impute_bl_from_regression: false
   # Владелец подтвердил (2026-07-18): тот же TabPFN-3 regression, что у клиники A.
   tabpfn_regression:
     enabled: true

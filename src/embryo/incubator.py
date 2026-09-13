@@ -613,30 +613,6 @@ def analyze_window_events(
     return summary, events
 
 
-def analyze_window(
-    logs: pd.DataFrame,
-    date_opu,
-    days: int | float = 6,
-    setpoints: dict | None = None,
-    tolerances: dict | None = None,
-    cadence_seconds: float = 30.0,
-    gap_factor: float = 3.0,
-    severity_thresholds: dict | None = None,
-) -> dict:
-    """Backward-compatible summary-only wrapper around event analysis."""
-    summary, _events = analyze_window_events(
-        logs,
-        date_opu,
-        days,
-        setpoints,
-        tolerances,
-        cadence_seconds,
-        gap_factor,
-        severity_thresholds,
-    )
-    return summary
-
-
 def analyze_patients(
     patients: pd.DataFrame,
     base_dir: str,

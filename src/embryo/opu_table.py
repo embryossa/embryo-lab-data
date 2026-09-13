@@ -32,19 +32,3 @@ def ensure_opu_schema(df: pd.DataFrame) -> pd.DataFrame:
         if c not in out.columns:
             out[c] = pd.NA
     return out[OPU_COLUMNS]
-
-
-def enrich_predictions(opu: pd.DataFrame, predictions: pd.DataFrame,
-                       opu_key: str = "ID", pred_key: str = "patient_id") -> pd.DataFrame:
-    """Локально добавляет TabPFN/DT к OPU, сохраняя канонический порядок и PHI внутри ПК."""
-    left = opu.copy()
-    right = predictions.copy()
-    if opu_key not in left or pred_key not in right:
-        raise KeyError(f"нельзя обогатить OPU: нужны {opu_key} и {pred_key}")
-    left["__join"] = left[opu_key].astype("string").str.strip().str.upper()
-    right["__join"] = right[pred_key].astype("string").str.strip().str.upper()
-    right = right.drop_duplicates("__join", keep="last")
-    keep = ["__join", "PRAI", "DIGITAL TWIN", "PRAI CI (TabPFN), %"]
-    left = left.drop(columns=[c for c in keep[1:] if c in left.columns], errors="ignore")
-    out = left.merge(right[[c for c in keep if c in right]], on="__join", how="left")
-    return ensure_opu_schema(out.drop(columns="__join", errors="ignore"))

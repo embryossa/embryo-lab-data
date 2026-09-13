@@ -16,4 +16,5 @@ pymupdf>=1.24        # парсинг ПГТ-А PDF (eMap Cycle Report) — pdfp
                      # встроенный кириллический шрифт отчёта, PyMuPDF даёт чистый
                      # построчный текст для остальных (латинских/числовых) полей
 pytest>=8.0          # приёмочные тесты проекта
+pytest-cov>=5.0      # покрытие: python -m pytest tests/ --cov=src/embryo --cov=scripts --cov=teable
 ruff>=0.16           # линтер; набор правил и обоснования — в ruff.toml

@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import json
 import os
 import sys
 
@@ -187,11 +188,21 @@ def norm_id(v):
 
 
 def iso_date(v):
+    """Даты приходят двух видов: ISO из файлов пайплайна и "дд.мм.гггг" из выгрузок.
+
+    ISO разбирается ПЕРВЫМ и без dayfirst: pandas 3.0.3 с ``dayfirst=True``
+    читает "2026-01-05" как 1 мая (format="mixed" не помогает), то есть тихо
+    переставляет день и месяц у каждой даты с днём ≤ 12 — примерно 40% строк,
+    и карточка пациентки показывала бы чужую дату. Та же логика продублирована
+    в cards_build._date; см. embryo/normalize.parse_dates.
+    """
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
     try:
-        t = pd.to_datetime(pd.Series([v]), errors="coerce", dayfirst=True,
-                           format="mixed").iloc[0]
+        t = pd.to_datetime(pd.Series([v]), errors="coerce", format="ISO8601").iloc[0]
+        if pd.isna(t):
+            t = pd.to_datetime(pd.Series([v]), errors="coerce", dayfirst=True,
+                               format="mixed").iloc[0]
     except (ValueError, TypeError):
         return None
     return None if pd.isna(t) else t.date().isoformat()
@@ -275,6 +286,23 @@ def clean(fields: dict) -> dict:
 # ---------------------------------------------------------------------------
 # One clinic
 # ---------------------------------------------------------------------------
+
+def run_dt_version(proc: str, default: str) -> str:
+    """Версия DT этого прогона — из его run_manifest.json, а не из статичного конфига клиники.
+
+    С 2026-09-13 новые прогоны всех клиник идут только через API 7.1, но в Runs остаются
+    прежние прогоны батча 7.0 — поэтому подпись берётся из файла прогона."""
+    try:
+        with open(os.path.join(proc, "run_manifest.json"), encoding="utf-8") as fh:
+            source = (json.load(fh).get("digital_twin") or {}).get("source") or ""
+    except (OSError, ValueError):
+        return default
+    if "7.1" in source:
+        return "v7.1 (REST API)"
+    if "7.0" in source:
+        return "v7.0"
+    return default
+
 
 def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
     proc = clinic.processed_dir
@@ -370,7 +398,7 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
             "Положительных исходов": n_pos,
             "В ревью-листе": n_review,
             "Флагов OZEMA": n_ozema,
-            "Версия DT": clinic.dt_version,
+            "Версия DT": run_dt_version(proc, clinic.dt_version),
             "Карточки (вьюер)": clinic.card_url(tc.cards_base_url(cfg)),
             "Заметки": f"sha256[pred]={run_hash}; clinic={clinic.code}; "
                        f"источник={proc}",

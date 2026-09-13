@@ -21,6 +21,8 @@ from typing import Iterable, Sequence
 import numpy as np
 import pandas as pd
 
+from .normalize import parse_dates
+
 
 @dataclass(frozen=True)
 class KPISpec:
@@ -442,24 +444,12 @@ def aggregate_kpi_slices(df: pd.DataFrame,
             continue
         group_col = col
         if label == "time":
-            parsed = pd.to_datetime(d[col], errors="coerce", dayfirst=True)
+            # parse_dates, а не голый dayfirst: сюда приходит и "дд.мм.гггг" из
+            # выгрузки, и ISO из уже записанных пайплайном файлов — второй
+            # dayfirst молча переставил бы день с месяцем и увёл цикл в чужой
+            # месяц среза «KPI по времени».
+            parsed = parse_dates(d[col])
             d = d.assign(_kpi_period=parsed.dt.to_period("M").astype("string"))
             group_col = "_kpi_period"
         result[label] = aggregate_kpis(d, group_col)
     return result
-
-
-def validate_finite(df: pd.DataFrame, cols=None) -> dict:
-    """Report missing/infinite values without treating optional MIIR as invalid."""
-    cols = cols or ["OCCR", "FR", "Model_FR", "ClR", "BlR", "TGBDR", "MIIR", "DegR", "3pNR",
-                    "Model_KPIScore"]
-    report = {}
-    for col in cols:
-        if col in df.columns:
-            series = pd.to_numeric(df[col], errors="coerce")
-            report[col] = {
-                "nan": int(series.isna().sum()),
-                "inf": int(np.isinf(series.to_numpy(dtype=float)).sum()),
-                "optional": col == "MIIR",
-            }
-    return report

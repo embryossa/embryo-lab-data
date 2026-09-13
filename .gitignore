@@ -29,6 +29,11 @@ __pycache__/
 *.pyc
 .env
 
+# Тесты и покрытие
+.pytest_cache/
+.coverage
+htmlcov/
+
 # Jupyter
 .ipynb_checkpoints/
 

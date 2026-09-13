@@ -14,6 +14,9 @@ if sys.platform == "win32":
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from embryo import dt_api  # noqa: E402
 
 
 def _merge(a, b):
@@ -47,8 +50,15 @@ def check(config_dir: Path, label: str) -> int:
 
     checks = []
     ext = cfg["external_tools"]
-    checks.append(("Digital Twin project", Path(ext["digital_twin"]["project_dir"])))
-    checks.append(("Digital Twin results", Path(ext["digital_twin"]["results_dir"])))
+    # Digital Twin — только 7.1 через REST API (батч 7.0 снят 2026-09-13): здесь только
+    # сертификат службы; ключ и живой ответ проверяет scripts/preflight.py.
+    try:
+        api = dt_api.api_settings(ext.get("digital_twin"))
+    except dt_api.DTApiError as exc:
+        print(f"[FAIL] {exc}")
+        return 1
+    print("[INFO] Digital Twin 7.1 через REST API: " + (api.get("url") or "https://127.0.0.1:8843/api/v1"))
+    checks.append(("Digital Twin 7.1 API certificate", Path(api.get("ca_cert") or "")))
     checks.append(("TabPFN project", Path(ext["tabpfn"]["project_dir"])))
     checks.append(("TabPFN batch BAT", Path(ext["tabpfn"]["project_dir"]) / "run_tabpfn_batch.bat"))
     checks.append(("TabPFN batch Python", Path(ext["tabpfn"]["project_dir"]) / "run_tabpfn_batch.py"))
