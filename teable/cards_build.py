@@ -205,10 +205,50 @@ def fetch_record_links(tb: tc.Teable, base_id: str, teable_url: str) -> dict:
 
 def build_payload(clinic: tc.Clinic, history: dict | None = None,
                   record_links: dict | None = None, archive: dict | None = None) -> dict:
-    proc = clinic.processed_dir
-    pred = _read(os.path.join(proc, "dt_predictions.csv"))
-    if pred.empty and not archive:
+    # Основной прогон, затем дополнительные (циклы вне когорты отчёта, scripts/
+    # run_off_cohort.py). Цикл, уже собранный из более раннего источника, не дублируется.
+    cycles: list = []
+    for proc in [clinic.processed_dir, *getattr(clinic, "supplemental_dirs", [])]:
+        seen = {c["uid"] for c in cycles}
+        cycles.extend(c for c in _run_cycles(proc, history, record_links) if c["uid"] not in seen)
+    if not cycles and not archive:
         return {}
+
+    # Циклы, которых в этом прогоне нет, но которые есть в базе, восстанавливаются
+    # из неё (см. fetch_archive). Строки текущего прогона имеют приоритет: они
+    # собраны из файлов, а не из денормализованного снимка, поэтому полнее.
+    fresh = {c["uid"] for c in cycles}
+    # Строка базы без cycle_uid (заведена OPU-таблицей до первого прогноза) лежит в
+    # архиве под join-ключом — сверяем и по нему, иначе цикл задвоится.
+    fresh_keys = {str(c.get("key") or "").upper() for c in cycles}
+    n_archived = 0
+    for uid, card in (archive or {}).items():
+        if uid in fresh or str(card.get("key") or "").upper() in fresh_keys:
+            continue
+        card = dict(card)
+        card["hist"] = ((history or {}).get(str(uid))
+                        or (history or {}).get(str(card.get("key") or "").upper(), []))
+        card["rec"] = (record_links or {}).get(str(uid))
+        cycles.append(card)
+        n_archived += 1
+
+    cycles.sort(key=lambda c: (c["opu"] or "", c["name"]), reverse=True)
+    return {
+        "clinic": clinic.name, "code": clinic.code,
+        "built": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "source": os.path.basename(clinic.processed_dir.rstrip("\\/")) or "processed",
+        "n_fresh": len(fresh), "n_archived": n_archived,
+        "n_off": sum(1 for c in cycles if c.get("scope")),
+        "cycles": cycles,
+    }
+
+
+def _run_cycles(proc: str, history: dict | None, record_links: dict | None) -> list:
+    """Карточки циклов одной папки прогона (dt_predictions.csv и соседние файлы)."""
+    pred = _read(os.path.join(proc, "dt_predictions.csv"))
+    if pred.empty:
+        return []
+    source = os.path.basename(proc.rstrip("\\/")) or "processed"
 
     tabpfn = _index_by(_read(os.path.join(proc, "tabpfn_predictions.csv")), "patient_id")
     reg = _index_by(_read(os.path.join(proc, "regression_qc.csv")), "cycle_uid")
@@ -326,31 +366,13 @@ def build_payload(clinic: tc.Clinic, history: dict | None = None,
             "hist": ((history or {}).get(str(uid))
                      or (history or {}).get(str(key).upper(), [])),
             "rec": (record_links or {}).get(str(uid)),
+            # Только у дополнительного прогона вне когорты отчёта: почему прогноз
+            # полный, урезан до воронки или отсутствует (см. embryo/off_cohort.py).
+            "scope": _str(r.get("cohort_scope_label")),
+            "tier": _str(r.get("model_tier")),
+            "src": source,
         })
-
-    # Циклы, которых в этом прогоне нет, но которые есть в базе, восстанавливаются
-    # из неё (см. fetch_archive). Строки текущего прогона имеют приоритет: они
-    # собраны из файлов, а не из денормализованного снимка, поэтому полнее.
-    fresh = {c["uid"] for c in cycles}
-    n_archived = 0
-    for uid, card in (archive or {}).items():
-        if uid in fresh:
-            continue
-        card = dict(card)
-        card["hist"] = ((history or {}).get(str(uid))
-                        or (history or {}).get(str(card.get("key") or "").upper(), []))
-        card["rec"] = (record_links or {}).get(str(uid))
-        cycles.append(card)
-        n_archived += 1
-
-    cycles.sort(key=lambda c: (c["opu"] or "", c["name"]), reverse=True)
-    return {
-        "clinic": clinic.name, "code": clinic.code,
-        "built": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "source": os.path.basename(clinic.processed_dir.rstrip("\\/")) or "processed",
-        "n_fresh": len(fresh), "n_archived": n_archived,
-        "cycles": cycles,
-    }
+    return cycles
 
 
 def fetch_history(tb: tc.Teable, base_id: str) -> dict:
@@ -729,8 +751,9 @@ function renderList(q){
   /* Состав страницы называется явно: сколько циклов из текущего прогона и
      сколько восстановлено из базы. Иначе рост числа циклов после прогона на
      подвыборке читается как «выгрузка выросла». */
-  const arch = DATA.n_archived
-    ? ' (' + DATA.n_fresh + ' из прогона + ' + DATA.n_archived + ' из базы)' : '';
+  const arch = DATA.n_archived || DATA.n_off
+    ? ' (' + DATA.n_fresh + ' из прогонов' + (DATA.n_off ? ', из них ' + DATA.n_off + ' вне отчёта' : '')
+      + (DATA.n_archived ? ' + ' + DATA.n_archived + ' из базы' : '') + ')' : '';
   $('#count').textContent = rows.length + ' из ' + DATA.cycles.length + ' циклов' + arch;
   $('#list').innerHTML = rows.map(c => {
     const p = c.prob.prai;
@@ -740,7 +763,8 @@ function renderList(q){
       ? "<span class='badge badge-crit'>P1</span>" : '';
     /* Цикл не из текущего прогона, а восстановленный из базы — это должно быть
        видно в списке, иначе архив выглядит как часть свежей выгрузки. */
-    const arch = c.archived ? "<span class='badge badge-info'>архив</span>" : '';
+    const arch = c.archived ? "<span class='badge badge-info'>архив</span>"
+      : (c.scope ? "<span class='badge badge-warn'>вне отчёта</span>" : '');
     return `<div class="pat${c.uid===SEL?' on':''}" data-uid="${esc(c.uid)}">
       <div class="pn">${esc(c.name)}</div>
       <div class="ps"><span>${esc(c.opu || '—')}</span><span>${esc(c.pid || '')}</span>
@@ -824,9 +848,11 @@ function funnelBlock(c){
 }
 
 function cohortBlock(c){
+  /* Вероятности сравниваются только внутри когорты отчёта: у циклов вне её
+     (c.scope) это оценка для гипотетического переноса, другая величина. */
   const specs = [
-    ['PRAI (TabPFN)', x => x.prob.prai, pct],
-    ['DIGITAL TWIN',  x => x.prob.dt,   pct],
+    ['PRAI (TabPFN)', x => x.scope ? null : x.prob.prai, pct],
+    ['DIGITAL TWIN',  x => x.scope ? null : x.prob.dt,   pct],
     ['ООК',           x => x.real['ООК'],       n0],
     ['2PN',           x => x.real['2PN'],       n0],
     ['Бластоцисты',   x => x.real['Бласт'],     n0],
@@ -966,6 +992,15 @@ function select(uid, push){
       (<code>${esc(DATA.source)}</code>). Числа те же, что были синхронизированы
       тогда; поля, которых база не хранит (источник спермы, отдельный выход
       TabPFN), здесь пусты — это отсутствие в архиве, а не отсутствие в цикле.</div>` : ''}
+    ${c.scope ? `<div class="note"><b>${esc(c.scope)}.</b> Цикла нет в последнем
+      прогоне отчёта (туда входят переносы с известным исходом), поэтому он не
+      участвует в KPI, калибровке и ревью-листе. ${c.tier === 'full'
+        ? 'Вероятности беременности — оценка моделей для переноса эмбриона этого цикла;' +
+          ' если переноса не было, исходом она не проверяется.'
+        : c.tier === 'funnel'
+        ? 'Зигот нет (2PN=0), поэтому вероятность беременности не считалась: показана' +
+          ' только ожидаемая воронка Digital Twin из точки после пункции против факта.'
+        : 'Модели к циклу не применялись — данных для прогноза нет.'}</div>` : ''}
     <div class="stats">
       <div class="jstat"><div class="jsl">Возраст</div><div class="jsv">${n0(c.age)}</div></div>
       <div class="jstat"><div class="jsl">AMH</div><div class="jsv">${n1(c.amh)}</div></div>
@@ -994,7 +1029,7 @@ function select(uid, push){
       <div>AFC: <b>${n0(c.afc)}</b></div></div></div>
     <div class="foot">${c.archived
         ? `Источник: база Teable, прогон <code>${esc(c.archived)}</code>`
-        : `Данные прогона: ${esc(DATA.source)}`} · собрано ${esc(DATA.built)}.
+        : `Данные прогона: ${esc(c.src || DATA.source)}`} · собрано ${esc(DATA.built)}.
       Числа приходят посчитанными из пайплайна; страница только отображает их.</div>`;
   window.scrollTo(0, 0);
 }

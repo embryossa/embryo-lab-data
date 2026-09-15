@@ -129,6 +129,8 @@ PRED_COLS = {
     "bank_eup":     ["banking_expected_euploid"],
     "nn_source":    ["nn_source"],
     "cluster":      ["dominant_cluster", "cluster"],
+    # off-cohort layer only (scripts/run_off_cohort.py): why this cycle was scored as it was
+    "scope_label":  ["cohort_scope_label"],
     "c0":           ["cluster_c0_prob"],
     "c1":           ["cluster_c1_prob"],
     "c2":           ["cluster_c2_prob"],
@@ -287,6 +289,27 @@ def clean(fields: dict) -> dict:
 # One clinic
 # ---------------------------------------------------------------------------
 
+# Fields that carry an actual model result. A cycle that went through a run with none
+# of them filled (OPU-only row of the main run, or an off-cohort cycle with OCC=0) gets
+# no Predictions/PvR row and does not count that run in "Прогонов".
+MODEL_OUTPUT_KEYS = ("med_okk", "med_mii", "med_pn2", "med_blasts", "med_good", "prai",
+                     "dt_headline", "p_per_transfer", "bayes_mean", "p_kat", "dnn",
+                     "cluster", "no_blast")
+
+
+def has_model_output(pred: dict) -> bool:
+    return any(num(pred.get(k)) is not None for k in MODEL_OUTPUT_KEYS if k != "cluster")         or text(pred.get("cluster")) is not None
+
+
+def run_scope(proc: str) -> str | None:
+    """"off_cohort" for a supplemental run (its run_manifest.json says so), else None."""
+    try:
+        with open(os.path.join(proc, "run_manifest.json"), encoding="utf-8") as fh:
+            return json.load(fh).get("scope")
+    except (OSError, ValueError):
+        return None
+
+
 def run_dt_version(proc: str, default: str) -> str:
     """Версия DT этого прогона — из его run_manifest.json, а не из статичного конфига клиники.
 
@@ -305,7 +328,16 @@ def run_dt_version(proc: str, default: str) -> str:
 
 
 def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
-    proc = clinic.processed_dir
+    """The clinic's main run, then each supplemental run folder, into one base."""
+    synced = False
+    for proc in [clinic.processed_dir, *clinic.supplemental_dirs]:
+        if proc != clinic.processed_dir:
+            print(f"  --- дополнительный прогон: {proc}")
+        synced = sync_run(cfg, tb, clinic, proc, args) or synced
+    return synced
+
+
+def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
     f_pred = os.path.join(proc, FILES["pred"])
     if not os.path.exists(f_pred):
         print(f"  [skip] нет {FILES['pred']} в {proc}")
@@ -323,7 +355,8 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
     # ---- run identity: content hash of the predictions file ---------------
     run_hash = sha256_file(f_pred)[:12]
     now = dt.datetime.now()
-    run_id = f"{clinic.code}-{now:%Y%m%d-%H%M}-{run_hash}"
+    scope = run_scope(proc)
+    run_id = f"{clinic.code}{'-' + scope if scope else ''}-{now:%Y%m%d-%H%M}-{run_hash}"
     cycles_only = getattr(args, "cycles_only", False)
     existing_runs = [r["fields"].get("Run ID") for r in tb.all_records(tables["Runs"])]
     if (any(k and k.endswith(run_hash) for k in existing_runs)
@@ -392,7 +425,7 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
             "Run ID": run_id,
             "Дата прогона": now.isoformat(),
             "Клиника": clinic.name,
-            "Входной файл": FILES["pred"],
+            "Входной файл": os.path.relpath(f_pred, clinic.processed_dir),
             "Пациентов всего": n_pat,
             "С исходом": n_out,
             "Положительных исходов": n_pos,
@@ -401,7 +434,9 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
             "Версия DT": run_dt_version(proc, clinic.dt_version),
             "Карточки (вьюер)": clinic.card_url(tc.cards_base_url(cfg)),
             "Заметки": f"sha256[pred]={run_hash}; clinic={clinic.code}; "
-                       f"источник={proc}",
+                       f"источник={proc}"
+                       + ("; охват=циклы вне когорты отчёта (без KPI, калибровки и "
+                          "review-list)" if scope == "off_cohort" else ""),
         }))
 
     # ---- 2) Cycles: upsert by join key ------------------------------------
@@ -426,12 +461,16 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
         tp = tabpfn.get(str(text(pred.get("patient_id")) or "")) or {}
         _, outside = regression_stage_fields(regression.get(str(uid)))
         prai = num(pred.get("prai"))
+        scored = has_model_output(pred)
         fields = clean({
             "ID пациента": pid,
             "Имя": text(real.get("name")),
             "cycle_uid": uid,
             "Клиника": clinic.name,
-            "Карточка": clinic.card_url(cards_url, uid),
+            # Without a cycle_uid (OPU-only row) the bare page link is only a
+            # default for a new record — it must not overwrite a per-cycle link.
+            "Карточка": (clinic.card_url(cards_url, uid) if uid
+                         else None if pid in cyc_index else clinic.card_url(cards_url)),
             "Возраст": num(real.get("age")),
             "AMH": num(real.get("amh")),
             "AFC": num(real.get("afc")),
@@ -458,6 +497,8 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
             # Latest-run snapshot — what the "Поиск пациенток" tab shows
             "PRAI (посл.)": prai if prai is not None else num(tp.get("p_tabpfn")),
             "DIGITAL TWIN (посл.)": num(pred.get("dt_headline")),
+            "Охват прогноза": (text(pred.get("scope_label"))
+                               or ("Когорта отчёта" if scored and not scope else None)),
             "Ширина CI, пп": num(pred.get("ci_width")),
             "Приоритет ревью": priority_label(vrow.get("priority")) if vrow else None,
             "Флаг OZEMA": text(orow.get("ozema_flag")) if orow else None,
@@ -465,8 +506,8 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
             "Стадий вне интервала": outside if regression.get(str(uid)) else None,
             # In --cycles-only mode the run bookkeeping is left untouched: that
             # mode refreshes fields, it does not record a new run.
-            "Прогонов": None if cycles_only else prior_runs.get(str(uid), 0) + 1,
-            "Последний прогон": None if cycles_only else run_id,
+            "Прогонов": None if cycles_only or not scored else prior_runs.get(str(uid), 0) + 1,
+            "Последний прогон": None if cycles_only or not scored else run_id,
         })
         if pid in cyc_index:
             updates.append((cyc_index[pid], fields))
@@ -486,7 +527,7 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
     rows = []
     for pid, p in patients.items():
         pred, uid = p["pred"], p["uid"]
-        if not pred:
+        if not has_model_output(pred):
             continue
         tp = tabpfn.get(str(text(pred.get("patient_id")) or ""), {})
         cl = text(pred.get("cluster"))
@@ -544,6 +585,8 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
     rows = []
     for pid, p in patients.items():
         real, pred, uid = p["real"], p["pred"], p["uid"]
+        if not has_model_output(pred):
+            continue
         vrow = review.get(str(uid), {})
         occ_r, occ_p = num(real.get("occ")), num(pred.get("med_okk"))
         bl_r, bl_p = num(real.get("bl")), num(pred.get("med_blasts"))

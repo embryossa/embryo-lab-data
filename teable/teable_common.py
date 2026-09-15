@@ -28,6 +28,7 @@ DEFAULT_CONFIG = os.path.join(HERE, "teable_config.local.json")
 # Repo root is one level above teable/ — used to resolve relative processed dirs
 # so the registry stays portable if the project folder is ever moved.
 REPO_ROOT = os.path.dirname(HERE)
+OFF_COHORT_SUBDIR = "off_cohort"
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +48,15 @@ class Clinic:
         processed = raw.get("processed_dir") or ""
         self.processed_dir = (processed if os.path.isabs(processed)
                               else os.path.join(REPO_ROOT, processed))
+        # Supplemental runs over cycles outside the report cohort (scripts/
+        # run_off_cohort.py writes <processed_dir>/off_cohort). Synced into the
+        # same base as their own runs; their cards are fresh, not archived.
+        extra = raw.get("supplemental_dirs")
+        if extra is None:
+            extra = [OFF_COHORT_SUBDIR] if os.path.isdir(
+                os.path.join(self.processed_dir, OFF_COHORT_SUBDIR)) else []
+        self.supplemental_dirs = [d if os.path.isabs(d) else os.path.join(self.processed_dir, d)
+                                  for d in extra]
 
     @property
     def configured(self) -> bool:

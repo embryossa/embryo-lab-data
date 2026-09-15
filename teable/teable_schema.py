@@ -176,6 +176,10 @@ def schema(tz="Asia/Tashkent"):
             # showing who the patient is, what the models said and whether the
             # cycle needs attention — without opening any linked table.
             f("PRAI (посл.)", num(3)), f("DIGITAL TWIN (посл.)", num(3)),
+            # Why the snapshot looks the way it does: empty for the report cohort,
+            # filled for cycles scored by the off-cohort layer (scripts/
+            # run_off_cohort.py) — e.g. "Без переноса, 2PN=0: только воронка DT".
+            f("Охват прогноза", txt()),
             f("Ширина CI, пп", num(1)), f("Приоритет ревью", sel(PRIORITY_CHOICES)),
             f("Флаг OZEMA", sel(OZEMA_FLAG_CHOICES)), f("Есть флаг OZEMA", check()),
             f("Стадий вне интервала", num(0)),
@@ -270,7 +274,7 @@ def table_keys():
 # that view (the data is still in the table, just out of the way).
 _SEARCH_COLUMNS = [
     "ID пациента", "Имя", "Дата OPU", "Возраст", "AMH", "Исход",
-    "PRAI (посл.)", "DIGITAL TWIN (посл.)", "Приоритет ревью", "Флаг OZEMA",
+    "PRAI (посл.)", "DIGITAL TWIN (посл.)", "Охват прогноза", "Приоритет ревью", "Флаг OZEMA",
     "OCC", "2pN", "Bl", "Good Bl", "Кластер", "Карточка",
     "Эмбриолог", "Врач", "Дата ET", "Прогонов", "cycle_uid",
 ]
