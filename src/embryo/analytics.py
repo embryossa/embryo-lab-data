@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from ._io import atomic_write_excel
+from .reconcile import PIPELINE_OUTPUT_FIELDS
 from .kpi import (DOCTOR_METRICS, EMBRYOLOGIST_METRICS, aggregate_kpi_slices, aggregate_kpis,
                   compute_kpi, compute_rates, competency_exclusion_mask,
                   embryologist_only_exclusion_mask, funnel_exclusion_mask)
@@ -68,6 +69,9 @@ def build_merged(dt: pd.DataFrame, opu: pd.DataFrame,
     if kopu not in opu.columns:
         raise KeyError(f"OPU key not found: {opu_key!r} or 'ID'")
     opu_key = kopu
+    # Model outputs come from the pipeline (dt) only; the OPU side's copies of them —
+    # manually typed values in a raw master — must not ride along as "<col>_opu".
+    opu = opu.drop(columns=[c for c in PIPELINE_OUTPUT_FIELDS if c in opu.columns and c != opu_key])
     dt["_join"] = _normalise_key(dt[kdt])
     opu["_join"] = _normalise_key(opu[opu_key])
     df = pd.merge(dt, opu, on="_join", how="left", suffixes=("", "_opu"),

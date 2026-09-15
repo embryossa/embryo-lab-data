@@ -61,6 +61,24 @@ def test_reverse_join_returns_predictions_to_the_local_opu_table():
     assert "cycle_uid" in enriched
 
 
+def test_manual_opu_probabilities_never_survive_the_pipeline():
+    """PRAI/DIGITAL TWIN typed into the OPU master are ignored even when a model gave nothing."""
+    from embryo.analytics import build_merged
+    dt, tab, opu = _tables()
+    opu = opu.assign(**{"PRAI": [0.9, 0.9, 0.9], "DIGITAL TWIN": [0.8, 0.8, 0.8],
+                        "PRAI CI (TabPFN), %": ["old", "old", "old"]})
+    pred = build_dt_predictions(dt, tab, opu, b"secret", threshold_pp=20)
+    enriched = enrich_opu_table(opu, pred)
+    third = enriched.loc[enriched["ID"] == "AB-3"].iloc[0]   # TabPFN did not score AB-3
+    assert pd.isna(third["PRAI"]) and pd.isna(third["PRAI CI (TabPFN), %"])
+    assert enriched.loc[enriched["ID"] == "AB-2", "DIGITAL TWIN"].iloc[0] == pytest.approx(0.7)
+    assert list(enriched.columns[:4]) == list(opu.columns[:4])   # sheet layout kept
+    _, df_u, _ = build_merged(pred.assign(_key=pred["patient_id"]), enriched.assign(_key=enriched["ID"]))
+    assert not [c for c in df_u.columns if c.endswith("_opu") and c.split("_opu")[0] in
+                ("PRAI", "DIGITAL TWIN", "PRAI CI (TabPFN), %", "ci_width_pp", "ci_wide", "cycle_uid")]
+    assert pd.isna(df_u.loc[df_u["patient_id"] == "AB-3", "PRAI"].iloc[0])
+
+
 def test_atomic_reconciled_outputs(tmp_path):
     dt, tab, opu = _tables()
     pred = build_dt_predictions(dt, tab, opu, b"secret")

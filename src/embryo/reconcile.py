@@ -138,23 +138,24 @@ def build_dt_predictions(dt: pd.DataFrame, tabpfn: pd.DataFrame | None,
     return out
 
 
+# Model-output columns of the OPU master. They are always this run's pipeline values:
+# the manually typed PRAI/DIGITAL TWIN of the master table are never read, not even as a
+# fallback when a model did not score a cycle (owner, 2026-09-14).
+PIPELINE_OUTPUT_FIELDS = ("PRAI", "DIGITAL TWIN", "PRAI CI (TabPFN), %", "cycle_uid",
+                          "ci_width_pp", "ci_wide")
+
+
 def enrich_opu_table(opu: pd.DataFrame, predictions: pd.DataFrame) -> pd.DataFrame:
     """Reverse-join predictions into the local OPU table; never sent to Claude."""
     opu_key = _find_col(opu, OPU_KEY_CANDIDATES, "OPU")
     o = _with_join_key(opu, opu_key, "OPU")
     p = _with_join_key(predictions, "patient_id", "dt_predictions")
-    fields = ["PRAI", "DIGITAL TWIN", "PRAI CI (TabPFN), %", "cycle_uid",
-              "ci_width_pp", "ci_wide"]
+    fields = list(PIPELINE_OUTPUT_FIELDS)
     lookup = p[["_join", *fields]].rename(columns={c: f"__pred_{c}" for c in fields})
-    out = o.merge(lookup, on="_join", how="left", validate="one_to_one")
-    for field in fields:
-        incoming = f"__pred_{field}"
-        # A fresh model result replaces a stale value; missing new output preserves it.
-        if field in out.columns:
-            out[field] = out[incoming].combine_first(out[field])
-        else:
-            out[field] = out[incoming]
-    return out.drop(columns=["_join", *[f"__pred_{c}" for c in fields]])
+    out = o.drop(columns=[c for c in fields if c in o.columns]).merge(
+        lookup, on="_join", how="left", validate="one_to_one")
+    # A cycle without a model result this run stays empty instead of showing the old value.
+    return out.rename(columns={f"__pred_{c}": c for c in fields}).drop(columns=["_join"])
 
 
 def write_reconciled_outputs(predictions: pd.DataFrame, opu: pd.DataFrame,

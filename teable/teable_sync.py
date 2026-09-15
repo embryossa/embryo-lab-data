@@ -83,7 +83,7 @@ OPU_COLS = {
     "et":           ["ET", "Перенос"],
     "day_et":       ["Day of ET", "День ET"],
     "preg":         ["Preg", "Исход", "Pregnancy"],
-    "prai":         ["PRAI"],
+    # PRAI/DIGITAL TWIN из OPU-таблицы не читаются: вероятности только из PRED_COLS.
     "method":       ["IVF/ICSI"],
     "embryologist": ["Embryologist", "Эмбриолог"],
     "doctor":       ["Doctor", "Врач"],
@@ -548,7 +548,8 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
         occ_r, occ_p = num(real.get("occ")), num(pred.get("med_okk"))
         bl_r, bl_p = num(real.get("bl")), num(pred.get("med_blasts"))
         gb_r, gb_p = num(real.get("good_bl")), num(pred.get("med_good"))
-        kat, prai = num(pred.get("p_kat")), num(real.get("prai"))
+        # PRAI — только выход TabPFN этого прогона (dt_predictions), не столбец OPU-таблицы.
+        kat, prai = num(pred.get("p_kat")), num(pred.get("prai"))
         rows.append(clean({
             "Ключ": f"{uid}::{run_id}", "Пациентка": pid, "Прогон": run_id,
             "OCC факт": occ_r, "OCC прогноз": occ_p, "OCC ±30%": flag30(occ_r, occ_p),
