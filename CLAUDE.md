@@ -94,7 +94,7 @@ skill `/run-analysis`; отдельный BAT проекта не создава
     эуплоидным эмбрионам) и вариативность analysis settings; мягкий шаг, не
     блокирует пайплайн при отсутствии отчётов.
 9. Атомарно записать CSV/XLSX/HTML/JSON и run manifest.
-10. Агентам дать только `data/processed/agent_packets/`; reverse join выполнить Python
+10. Агентам дать только папку `agent_packets` текущего прогона (`data/processed/agent_packets/` для клиники A, `data/processed/<клиника>/agent_packets/` для остальных); reverse join выполнить Python
     локально после интерпретации.
 
 ## Приватность
@@ -134,23 +134,14 @@ OPU master или полный `dt_predictions.csv`. Финальный XLSX/HTM
   «Barcode Changes History»), забирается живым pull по REST API (`src/embryo/lots.py`).
   Гейт `consumable_lots.enabled` + Personal Access Token — только в
   `config/settings.local.yaml`, в репозиторий не коммитятся.
-- MIRI логи: авторитетный источник — шаренная папка Google Drive (folder id в
-  `config/settings.local.yaml: miri_logs.google_drive_folder_id`), структура зеркальна
-  `data/miri_logs/6391/Miri-6391-Incubation-[YYMMDD-YYMMDD]/Data/*.csv` (подтверждено
-  2026-07-17: тот же разделитель `;`, те же колонки). Синхронизация — коннектор Google
-  Drive MCP, интерактивно из Claude Code (см. `.claude/skills/run-analysis/SKILL.md`
-  шаг 2a), не headless Python: скачиваются только папки недель, пересекающие окно
-  `Date OPU..+cultivation_window_days` пациентов review-list текущего прогона, а не весь
-  архив. В `data/miri_logs` больше не кладутся логи вручную.
-- ПГТ-А: личный кабинет `https://pa.ivf.uz/orders` (нет API, вход на этом ПК
-  автоматический), вкладка Pdg — заказы биопсии трофэктодермы, скачиваемый PDF
-  (eMap Cycle Report, IMC Genomics/Vitrolife) в разделе Results со статусом
-  `Provided`. Скачивание и сопоставление с ФИО — интерактивно из Claude Code
-  (claude-in-chrome, см. `.claude/skills/run-analysis/SKILL.md` шаг 2b), не headless.
-  Парсинг — `src/embryo/pgt.py`; сопоставление с `cycle_uid` по имени пациента
-  (Subject ID портала = Имя+Фамилия без пробела), повторные попытки одной
-  пациентки разрешаются по дате отчёта внутри окна `Date OPU..Date ET`.
-  Классификация euploid/aneuploid/mosaic — по английскому `Summary result`, не
+- MIRI логи: авторитетный источник — шаренная папка Google Drive (структура и формат
+  CSV зеркальны `data/miri_logs/6391/`). Синхронизация — только интерактивно через
+  Google Drive MCP и только недели окна пациентов review-list, не весь архив, не
+  headless Python (процедура — `run-analysis` шаг 2a). Вручную в `data/miri_logs` логи
+  не кладутся.
+- ПГТ-А: личный кабинет `https://pa.ivf.uz/orders` (нет API) — скачивание и
+  сопоставление только интерактивно через claude-in-chrome, не headless (процедура —
+  `run-analysis` шаг 2b); парсинг — `src/embryo/pgt.py`. Классификация euploid/aneuploid/mosaic — по английскому `Summary result`, не
   по русскоязычному `Sign-off comment` (у отчёта нечитаемый кириллический шрифт
   без ToUnicode CMap — ограничение самого PDF, подтверждено на pdfplumber и
   PyMuPDF). Только когорта review-list ∪ известный исход переноса. Сырые PDF и
@@ -161,10 +152,9 @@ OPU master или полный `dt_predictions.csv`. Финальный XLSX/HTM
 
 ## Роли Claude Code
 
-Промежуточные роли используют `model: haiku`: схема, KPI, model QA, MIRI, нарратор,
-лоты, DNN-проверка — однотипные задачи объяснения по готовому пакету, не требующие
-дорогой модели. `lead-analyst` явно закреплён за `model: claude-opus-5` (не alias
-`opus` — пин, чтобы модель не менялась молча при сдвиге alias) — единственная роль,
-синтезирующая всё воедино. Файл агента один на все клиники.
+Модели ролей — во frontmatter `.claude/agents/*.md` (источник истины). Промежуточные
+роли — дешёвые модели (однотипные объяснения по готовому пакету); синтезирующие роли
+пинятся полным ID, а не alias `opus`, чтобы модель не менялась молча при сдвиге alias.
+Файл агента один на все клиники.
 Python считает и классифицирует; агенты только объясняют. Факт и гипотезу всегда
 разделять, диагнозов и назначений не давать.

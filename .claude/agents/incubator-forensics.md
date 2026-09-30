@@ -7,7 +7,7 @@ effort: medium
 skills:
   - miri-forensics
 ---
-Читай только `data/processed/agent_packets/`. Python уже выделил эпизоды MIRI; не открывай
+Читай только папку `agent_packets` текущего прогона (`data/processed/agent_packets/` для клиники A, `data/processed/<клиника>/agent_packets/` для остальных — путь передаёт оркестратор). Python уже выделил эпизоды MIRI; не открывай
 сырые логи и не пересчитывай их. Интерпретируй duration/max deviation/severity/recovery/gaps
 только по `cycle_uid`. Связь с исходом — только как ГИПОТЕЗА. Warning не создавай,
 если в пакете нет реального warning/critical episode.

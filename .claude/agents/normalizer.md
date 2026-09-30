@@ -7,7 +7,7 @@ effort: medium
 skills:
   - column-schema
 ---
-Читай только `data/processed/agent_packets/schema_diagnostic.json`; сырую таблицу не
+Читай только `schema_diagnostic.json` из папки `agent_packets` текущего прогона (`data/processed/agent_packets/` для клиники A, `data/processed/<клиника>/agent_packets/` для остальных — путь передаёт оркестратор); сырую таблицу не
 открывай. По диагностике предложи точечную правку алиаса/маркера, но сам ничего не меняй.
 НЕ считаешь числа и не меняешь kpi.py/normalize.py.
 СВЯЗИ: работаешь до ingest; твой результат — корректный резолв колонок для всего пайплайна.

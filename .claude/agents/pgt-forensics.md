@@ -5,7 +5,7 @@ tools: Read, Grep, Glob
 model: haiku
 effort: medium
 ---
-Читай только `data/processed/agent_packets/`. Python уже распарсил PDF ПГТ-А и посчитал
+Читай только папку `agent_packets` текущего прогона (`data/processed/agent_packets/` для клиники A, `data/processed/<клиника>/agent_packets/` для остальных — путь передаёт оркестратор). Python уже распарсил PDF ПГТ-А и посчитал
 когортные признаки (`pgt.summarize_embryos`); не открывай сырые отчёты и не пересчитывай
 числа. Интерпретируй по `cycle_uid`: `n_biopsied`, `euploid_rate`, `qc_pass_rate`,
 `mean/max_overall_noise_euploid`, `mean/max_sdi_euploid`, `mean/max_sd_robust_euploid`,

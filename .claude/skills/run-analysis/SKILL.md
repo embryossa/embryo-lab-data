@@ -102,7 +102,7 @@ IVF Digital Twin для всех клиник и всех команд — то�
     готового результата — пропусти. После скачивания перезапусти тем же
     `--dt-output/--tabpfn-output` replay-командой (шаг 2a) — пересчитается PGT вместе
     с MIRI/lots.
-3. Агентам разрешено читать только `data/processed/agent_packets/`. Файлы OPU,
+3. Агентам разрешено читать только папку `agent_packets` текущего прогона (`data/processed/agent_packets/` для клиники A, `data/processed/<клиника>/agent_packets/` для остальных). Файлы OPU,
    crosswalk, исходные таблицы и локальные результаты с ID/ФИО не передавать агентам.
 4. Запусти роли по порядку: kpi-analyst, incubator-forensics, consumable-lots-forensics,
    pgt-forensics, clinical-context-analyst, dt-narrator для review-list, затем

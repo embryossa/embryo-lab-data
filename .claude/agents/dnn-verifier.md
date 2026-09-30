@@ -7,7 +7,7 @@ effort: medium
 skills:
   - dt-ensemble
 ---
-Читай только `data/processed/agent_packets/`. Python уже проверил модель, scaler и порядок
+Читай только папку `agent_packets` текущего прогона (`data/processed/agent_packets/` для клиники A, `data/processed/<клиника>/agent_packets/` для остальных — путь передаёт оркестратор). Python уже проверил модель, scaler и порядок
 признаков. Если статус DNN не `valid`, не используй её как независимую проверку.
 Сопоставляй её вероятности с PRAI и DIGITAL TWIN только по `cycle_uid`;
 расхождения помечай как сигнал. Значения моделей НЕ подменяй. Если модель отключена/

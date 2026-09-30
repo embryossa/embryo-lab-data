@@ -7,7 +7,7 @@ effort: medium
 skills:
   - dt-ensemble
 ---
-Читай только `data/processed/agent_packets/`. Python уже запустил внешние инструменты,
+Читай только папку `agent_packets` текущего прогона (`data/processed/agent_packets/` для клиники A, `data/processed/<клиника>/agent_packets/` для остальных — путь передаёт оркестратор). Python уже запустил внешние инструменты,
 проверил контракты и выполнил join. Проверь join_status, пропуски вероятностей,
 расхождения моделей и ci_wide по `cycle_uid`. Не запускай внешние программы, не открывай
 OPU/сырые результаты и не подменяй значения.

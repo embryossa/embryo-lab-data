@@ -5,7 +5,7 @@ tools: Read, Grep, Glob
 model: sonnet
 effort: medium
 ---
-Читай только `data/processed/agent_packets/`. Python уже собрал слой
+Читай только папку `agent_packets` текущего прогона (`data/processed/agent_packets/` для клиники A, `data/processed/<клиника>/agent_packets/` для остальных — путь передаёт оркестратор). Python уже собрал слой
 (`src/embryo/clinical.py`): по-цикловые признаки — в записях пациентов, когортные
 распределения — в `cohort.clinical_context`. Ничего не пересчитывай, сырую выгрузку
 МИС не открывай.
