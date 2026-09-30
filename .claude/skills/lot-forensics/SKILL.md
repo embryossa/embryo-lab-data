@@ -4,12 +4,13 @@ description: Airtable consumable-lot schema (расходные материал
 ---
 # Форензик смены лотов расходников (Airtable)
 
-Источник: Airtable base `appTnM9Hp4x4jecrW`, две таблицы.
+Источник: Airtable-база лаборатории (ID базы и таблиц — `consumable_lots.airtable` в
+`config/settings.local.yaml`), две таблицы.
 
-- «расходные материалы» (`tbldCKiYM7K6tsfQO`): позиция (Наименование, Производитель,
+- «расходные материалы» (`items_table_id`): позиция (Наименование, Производитель,
   Артикул, атрибут-категория среда/пластик/микроинструменты/материалы, текущий
   Barcode, Start/End date).
-- «Barcode Changes History» (`tblyzvKNM40cjqqIr`): одна строка на каждую смену
+- «Barcode Changes History» (`changes_table_id`): одна строка на каждую смену
   лота/скан по конкретной позиции — `Change Date`, значение лота (`All Barcodes`),
   ссылка на позицию.
 

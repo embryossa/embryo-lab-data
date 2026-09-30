@@ -40,3 +40,29 @@ htmlcov/
 # внешние выходы/модели
 *.joblib
 *.pyd
+
+# машинные пути исследовательских скриптов reports/ (шаблон — *.example):
+config/research_paths.local.json
+
+# reports/: публикуются только код, агрегированные таблицы, рисунки и тексты.
+# Построчные данные циклов (прогнозы, payload, исходы, per-cycle CSV для
+# рисунков), логи прогонов и промежуточные pickle остаются локально.
+reports/**/logs/
+reports/**/shards/
+reports/**/work/
+reports/**/*.log
+reports/**/*.pkl
+reports/**/run_log.txt
+reports/**/api_payload.json
+reports/**/outcomes.csv
+reports/**/imputation_flags.csv
+reports/**/dt_full_*.csv
+reports/**/dt71_predictions.csv
+reports/**/test_predictions.csv
+reports/**/*_predictions.csv
+reports/**/fig_*_minimal.csv
+reports/**/seen_overlap.csv
+
+# одноразовые локальные выгрузки/бэкапы
+.claude/*.doctor-bak
+batch*_extract.py

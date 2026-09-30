@@ -27,7 +27,6 @@ CACHE_DIR = APP_DIR / "tabpfn_cache"
 CONFIG = APP_DIR / "tabpfn_config.json"
 LOG_DIR = APP_DIR / "tabpfn_logs"
 LOG_PATH = LOG_DIR / "tabpfn_predictions.csv"
-DEFAULT_CONTEXT = r"C:/Users/User/Desktop/IVF/AI/DNN/обучение и валидация/all_df_with_KPI.xlsx"
 DEFAULT_TARGET = "Исход переноса"
 
 LOG_COLUMNS = ["timestamp", "record_id", "clinic", "patient_name", "patient_id",
@@ -75,7 +74,7 @@ def _args() -> argparse.Namespace:
 def _cfg() -> dict:
     c = json.loads(CONFIG.read_text(encoding="utf-8")) if CONFIG.exists() else {}
     return {"backend": c.get("backend", "local"), "device": c.get("device", "cpu"),
-            "key": c.get("key", ""), "ctx": c.get("context_path", DEFAULT_CONTEXT),
+            "key": c.get("key", ""), "ctx": c.get("context_path", ""),
             "target": c.get("target", DEFAULT_TARGET), "max_n": int(c.get("max_n", 5000)),
             "seed": int(c.get("seed", 42)), "n_sim": int(c.get("n_sim", 2000)),
             "max_query": int(c.get("max_query", 400)), "clinic": c.get("clinic", "")}
@@ -135,6 +134,8 @@ def main() -> None:
     args = _args()
     cfg = _cfg()
     frame = _load(args.input_path)
+    if not cfg["ctx"]:
+        raise ValueError(f"context_path is not set in {CONFIG}")
     if not os.path.isfile(cfg["ctx"]):
         raise FileNotFoundError(f"TabPFN context file not found: {cfg['ctx']}")
 

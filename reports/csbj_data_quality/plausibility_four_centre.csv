@@ -1,0 +1,6 @@
+centre,n,MII>OCC,MII>OCC_n,2PN>MII,2PN>MII_n,cleavage>2PN,cleavage>2PN_n,blastocysts>2PN,blastocysts>2PN_n,good>blastocysts,good>blastocysts_n,amh_default_2.0,afc_default_12,bmi_default_23_or_24,blastocyst_missing
+A,423,15,423,0,423,99,413,5,107,0,73,423,423,423,316
+B,412,0,410,2,410,0,412,4,389,2,374,412,412,412,23
+C,163,0,159,3,159,99,163,4,152,1,149,163,163,163,11
+D,28,0,28,0,28,2,28,0,28,0,27,28,28,28,0
+All,1026,15,1020,5,1020,200,1016,13,676,3,623,1026,1026,1026,350

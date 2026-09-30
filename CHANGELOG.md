@@ -1,17 +1,15 @@
-# Реализованная реорганизация
+# Changelog
 
-Версия ready-1:
+Detailed history is in the git log. Notable milestones:
 
-- MII сделан необязательным; MIIR считается только по наблюдаемому MII, ноль сохранён.
-- Разделены OCCR, MIIR, лабораторный FR, Model_FR и Model_KPIScore.
-- Добавлены агрегаты sum/sum, Wilson CI, direction, competency, benchmark, class/source.
-- Исправлен верхний контроль DegR/3pNR и срезы времени/метода/эмбриолога/врача.
-- Реализован строгий DT + TabPFN + OPU join, enriched OPU и review union после CI.
-- DNN требует scaler обучения, проверяет признаки и запрещает fit на inference.
-- TabPFN получил headless batch Python + BAT с explicit input/output/run-id.
-- Все результаты пишутся атомарно и имеют schema versions/hashes в manifest.
-- Агентные пакеты используют только HMAC cycle_uid; crosswalk остаётся локально.
-- MIRI анализирует непрерывные episodes, gaps, duration, max deviation, severity/recovery.
-- DataLore notebook сохранён как reference, выполняемая логика перенесена в Python.
-- Добавлены Claude Code skill `/run-analysis`, Sonnet-роли и итоговый Opus-агент.
-- Добавлены синтетические unit/replay fixtures и проверки контрактов.
+- **2026-10** — prepared for public release: MIT license, English README, citation
+  metadata, CI; machine paths and internal resource IDs moved to git-ignored local
+  configs; manuscript analyses in `reports/` published as code and aggregates only.
+- **2026-09** — IVF Digital Twin reached only through the 7.1 REST API (7.0 batch
+  removed); laboratory KPIs computed over all cycles, not only transfers; model layer for
+  cycles outside the report cohort; Teable sync.
+- **2026-07** — first release (ready-1): optional MII, separated OCCR/MIIR/FR and
+  Model_KPIScore; sum/sum cohort KPIs with Wilson CI, direction and competency;
+  strict DT + TabPFN + OPU join with versioned contracts; HMAC `cycle_uid` agent packets;
+  MIRI episode analysis; DataLore notebook ported to Python; `/run-analysis` skill with
+  agent roles; synthetic fixtures and contract tests.

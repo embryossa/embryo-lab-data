@@ -1,0 +1,50 @@
+{
+  "centerD_lab": {
+    "cycles": 102,
+    "cleavage_gt_2pn": 13,
+    "with_both": 102,
+    "excess_cleaved_embryos": 22,
+    "zero_2pn": 3,
+    "zero_bl": 17
+  },
+  "miri": {
+    "cycles": 28,
+    "with_logs": 18,
+    "max_severity": {
+      "critical": 28
+    },
+    "with_logs_warning_or_critical": 18,
+    "gap_events_with_logs": 7,
+    "western_electric_rule1_per_cycle_median": 219.5,
+    "lid_open_events_per_cycle_median": 11.0,
+    "event_types": {
+      "o2_excursion": 537,
+      "co2_excursion": 337,
+      "lid_open": 228,
+      "alarm": 38,
+      "gap": 17,
+      "temperature_excursion": 2
+    },
+    "sensors": {
+      "O2Concentration": 537,
+      "Co2Concentration": 337,
+      "IsLidOpen": 228,
+      "N2PressureAlarm": 25,
+      "Date": 17,
+      "O2ConcentrationAlarm": 11,
+      "Co2PressureAlarm": 2,
+      "Temp11": 1,
+      "Temp12": 1
+    },
+    "severity": {
+      "warning": 739,
+      "critical": 420
+    },
+    "gap_reason": {
+      "incubator_or_logging_stopped": 10,
+      "power_or_logging_outage": 7
+    },
+    "event_duration_median_min": 1.517,
+    "event_duration_p90_min": 4.033
+  }
+}

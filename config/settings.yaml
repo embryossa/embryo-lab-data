@@ -105,9 +105,10 @@ miri_logs:                       # логи инкубатора MIRI (влож�
 consumable_lots:                 # смена лотов расходников (Airtable), форензик окна культивирования
   enabled: false                 # true выставляется в settings.local.yaml вместе с token
   airtable:
-    base_id: "appTnM9Hp4x4jecrW"
-    items_table_id: "tbldCKiYM7K6tsfQO"      # расходные материалы
-    changes_table_id: "tblyzvKNM40cjqqIr"    # Barcode Changes History
+    # ID базы и таблиц — внутренние для лаборатории, задаются в settings.local.yaml
+    base_id: ""
+    items_table_id: ""           # расходные материалы
+    changes_table_id: ""         # Barcode Changes History
     token: ""                    # НЕ коммитить реальный PAT — только в settings.local.yaml
 
 pgt:                              # отчёты ПГТ-А (eMap Cycle Report), личный кабинет pa.ivf.uz

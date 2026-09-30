@@ -1,7 +1,7 @@
 """OZEMA — per-cycle oocyte-to-embryo arrest flags.
 
-Methodology reproduced from the owner's OZEMA sheet (OPU table, Google Drive
-`198CHO8OEhJthRtCYGw8BvOwSC3WtT4JTy19lQa132Dw`), citing Van Der Kelen et al.,
+Methodology reproduced from the owner's OZEMA sheet (OPU master table, private
+Google Drive), citing Van Der Kelen et al.,
 Hum Reprod 2026. This is a per-cycle ONE-SIDED EXACT BINOMIAL SIGNIFICANCE TEST
 (alpha=0.05) against Vienna-style competency thresholds — not a raw
 below-the-line check:

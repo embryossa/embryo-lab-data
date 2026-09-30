@@ -70,7 +70,10 @@ def fetch_consumable_lots(cfg: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Pull the items table and the Barcode Changes History table for this run."""
     at_cfg = cfg["consumable_lots"]["airtable"]
     token = at_cfg.get("token") or ""
-    base_id = at_cfg["base_id"]
+    base_id = at_cfg.get("base_id") or ""
+    if not (base_id and at_cfg.get("items_table_id") and at_cfg.get("changes_table_id")):
+        raise RuntimeError("не заданы base_id/items_table_id/changes_table_id: "
+                           "заполните consumable_lots.airtable в config/settings.local.yaml")
     items = fetch_table(base_id, at_cfg["items_table_id"], token)
     changes = fetch_table(base_id, at_cfg["changes_table_id"], token)
     return items, changes

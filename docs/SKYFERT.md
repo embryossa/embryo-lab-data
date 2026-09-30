@@ -46,7 +46,7 @@ MII. `config/clinics/skyfert/columns.yaml` резолвит только 16 ко
 
 ## Полный прогон (владелец подтвердил 2026-07-21, вечер)
 
-Запуск: `python scripts/run_analysis.py "C:\Users\User\Desktop\IVF\SkyFert\SkyFert.xlsx" --clinic skyfert`.
+Запуск: `python scripts/run_analysis.py "C:\path\to\SkyFert.xlsx" --clinic skyfert`.
 Даёт то же самое, что и `--clinic fertimed`: Digital Twin, TabPFN, реконсиляция
 (`dt_predictions.csv`, `OPU_table_enriched.xlsx`), полный лабораторный KPI
 (overall + срез по методу IVF/ICSI — без среза по времени, дат нет), OZEMA,
@@ -178,7 +178,7 @@ Vienna (`ClR = cleavage_d3 / two_pn` в `kpi.py`, общая для всех к�
 
 Быстрый KPI/OZEMA-смоук-тест (без внешних DT/TabPFN, без HTML-отчёта):
 ```
-python scripts/skyfert_kpi_test.py "C:\Users\User\Desktop\IVF\SkyFert\SkyFert.xlsx"
+python scripts/skyfert_kpi_test.py "C:\path\to\SkyFert.xlsx"
 ```
 Результаты: `data/processed/skyfert/kpi_overall.csv`, `kpi_method.csv`,
 `ozema_cycles.csv`, `ozema_genetic_counseling_candidates.csv` (де-идентифицированы,
@@ -188,7 +188,7 @@ python scripts/skyfert_kpi_test.py "C:\Users\User\Desktop\IVF\SkyFert\SkyFert.xl
 Полный прогон (Digital Twin, TabPFN, реконсиляция, HTML-отчёт — см. "Полный
 прогон" выше):
 ```
-python scripts/run_analysis.py "C:\Users\User\Desktop\IVF\SkyFert\SkyFert.xlsx" --clinic skyfert
+python scripts/run_analysis.py "C:\path\to\SkyFert.xlsx" --clinic skyfert
 ```
 Результаты — та же структура `data/processed/skyfert/`, что и у Fertimed:
 `DT_Analytics_Report.html`/`.xlsx`, `dt_predictions.csv`,

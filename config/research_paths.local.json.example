@@ -1,0 +1,7 @@
+{
+  "dt_project": "C:/path/to/IVF Digital Twin",
+  "cohort_a_validation": "C:/path/to/validation.xlsx",
+  "dt_gat_training": "C:/path/to/training_file.xlsx",
+  "tabpfn_context": "C:/path/to/all_df_with_KPI.xlsx",
+  "tabfm_workdir": "C:/path/to/tabfm_cmp"
+}

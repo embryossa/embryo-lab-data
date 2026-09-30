@@ -10,7 +10,11 @@ mpl.rcParams.update({'font.family': 'DejaVu Sans', 'font.size': 8, 'axes.titlesi
     'axes.spines.right': False, 'savefig.dpi': 300, 'savefig.bbox': 'tight',
     'pdf.fonttype': 42})
 MM = 1 / 25.4
-B = '/sessions/nice-festive-hawking/mnt/embryo-lab-data/data/processed/benchmark/'
+from pathlib import Path
+import os
+ROOT = Path(__file__).resolve().parents[2]
+os.chdir(Path(__file__).resolve().parent)  # outputs are written next to this script
+B = str(ROOT / 'data/processed/benchmark') + '/'
 d = pd.read_csv(B + 'dt_predictions.csv'); y = d.Preg.to_numpy(int); prev = y.mean()
 MODELS = [('Digital Twin', 'DIGITAL TWIN', '#0072B2', '-'),
           ('TabPFN', 'PRAI', '#D55E00', '-'),

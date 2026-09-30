@@ -20,8 +20,12 @@ C_CSDI, C_TAB, C_GREY = '#0072B2', '#D55E00', '#666666'
 MM = 1 / 25.4
 
 # ---------------- data ----------------
-CSV = '/sessions/nice-festive-hawking/mnt/uploads/model_comparison_tabpfn3_vs_digitaltwin.csv'
-XLS = '/sessions/nice-festive-hawking/mnt/embryo-lab-data/data/processed/fertimed/local_private/model_input.xlsx'
+from pathlib import Path
+import os
+ROOT = Path(__file__).resolve().parents[2]
+os.chdir(Path(__file__).resolve().parent)  # outputs are written next to this script
+CSV = ROOT / 'data/processed/fertimed/model_comparison_tabpfn3_vs_digitaltwin.csv'
+XLS = ROOT / 'data/processed/fertimed/local_private/model_input.xlsx'
 c = pd.read_csv(CSV, encoding='utf-8-sig')
 m = pd.read_excel(XLS, sheet_name='model_input').set_index('cycle_uid').loc[c.cycle_uid]
 df = c.copy()

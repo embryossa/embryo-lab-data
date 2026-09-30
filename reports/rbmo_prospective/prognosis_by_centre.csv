@@ -1,0 +1,13 @@
+﻿centre,rbmo_label,band,n,pregnancies,observed_%,ci_low_%,ci_high_%,mean_pred_%,mean_DT_%,mean_TabPFN_%,plotted
+Fertimed,Centre A,<40%,148,54,36.5,29.2,44.5,28.8,25.4,32.2,True
+Fertimed,Centre A,40–60%,178,77,43.3,36.2,50.6,49.7,45.7,53.7,True
+Fertimed,Centre A,≥60%,97,47,48.5,38.8,58.3,65.1,65.3,65.0,True
+GGRC,Centre B,<40%,19,13,68.4,46.0,84.6,31.8,41.6,22.1,True
+GGRC,Centre B,40–60%,87,52,59.8,49.3,69.4,52.8,53.6,52.0,True
+GGRC,Centre B,≥60%,306,224,73.2,68.0,77.9,66.8,66.5,67.1,True
+SkyFert,Centre C,<40%,48,11,22.9,13.3,36.5,29.5,26.9,32.2,True
+SkyFert,Centre C,40–60%,76,22,28.9,20.0,40.0,52.5,51.1,54.0,True
+SkyFert,Centre C,≥60%,39,10,25.6,14.6,41.1,63.2,63.4,63.1,True
+Two-Line,4th centre,<40%,2,1,50.0,9.5,90.5,34.9,37.5,32.3,False
+Two-Line,4th centre,40–60%,6,2,33.3,9.7,70.0,56.1,50.5,61.7,False
+Two-Line,4th centre,≥60%,20,13,65.0,43.3,81.9,68.5,70.7,66.4,True

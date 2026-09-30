@@ -22,8 +22,6 @@ import tempfile
 import numpy as np
 import pandas as pd
 
-MODEL_DEFAULT = r"C:/Users/User/PycharmProjects/pythonProject/KAN/saved_model/my_best_model"
-
 # Английские имена OPU -> русские имена, которых ждёт модель.
 _ALIAS = {
     "Age": "Возраст", "# Attempt": "№ попытки", "N folicules OPU": "Количество фолликулов",
@@ -182,12 +180,14 @@ def _parse_args():
     args = parser.parse_args()
     args.input_path = args.input_path or args.legacy_input
     args.model_dir = (args.model_dir or args.legacy_model
-                      or os.environ.get("DNN_MODEL_PATH", MODEL_DEFAULT))
+                      or os.environ.get("DNN_MODEL_PATH", ""))
     args.out_path = args.out_path or args.legacy_output or "evo_predictions.csv"
     args.scaler_path = (args.scaler_path or args.legacy_scaler
                         or os.environ.get("DNN_SCALER_PATH", ""))
     if not args.input_path:
         parser.error("--input is required")
+    if not args.model_dir:
+        parser.error("--model (or DNN_MODEL_PATH) is required")
     return args
 
 

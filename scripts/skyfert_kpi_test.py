@@ -33,7 +33,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from embryo import ingest, kpi, ozema, privacy, _io  # noqa: E402
 from embryo.clinics import skyfert  # noqa: E402
 
-DEFAULT_INPUT = r"C:\Users\User\Desktop\IVF\SkyFert\SkyFert.xlsx"
 CONFIG_DIR = ROOT / "config" / "clinics" / "skyfert"
 
 
@@ -62,7 +61,7 @@ def _eligible_cycles(normalized: pd.DataFrame) -> pd.DataFrame:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Skyfert -- отдельный KPI/данные тест")
-    parser.add_argument("input", nargs="?", default=DEFAULT_INPUT)
+    parser.add_argument("input")
     args = parser.parse_args(argv)
 
     input_path = Path(args.input)

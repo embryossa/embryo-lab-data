@@ -1,0 +1,104 @@
+{
+  "source": "OPU table for publication.xlsx",
+  "source_sha256": "6100cad0ac1073023a1ec95455601a28c3becdf4ccdd251db0077d6bbf301b2b",
+  "started": "2026-09-29T15:08:29",
+  "finished": "2026-09-29T15:49:46",
+  "rows_source": 126,
+  "known_outcome": 60,
+  "eligible_cycles": 59,
+  "api": {
+    "url": "https://127.0.0.1:8843/api/v1",
+    "n_sim": 2000,
+    "poll_seconds": 15,
+    "timeout_minutes": 720,
+    "keep_batches": false,
+    "timepoints": [
+      "transfer",
+      "retrieval"
+    ],
+    "fallback_to_retrieval": true,
+    "impute": {
+      "afc_columns": [
+        "afc",
+        "clin_afc"
+      ],
+      "afc_from_follicles": true,
+      "afc_constant": 12,
+      "attempt": 1,
+      "okk_for_thawed_oocytes": true
+    }
+  },
+  "dt": {
+    "source": "IVF Digital Twin 7.1 REST API (analytics connection)",
+    "status": {
+      "complete": 57,
+      "invalid": 2
+    },
+    "retrieval_status": {
+      "complete": 59
+    },
+    "timepoint_used": {
+      "transfer": 57,
+      "retrieval_fallback": 2
+    },
+    "model_fingerprints": [
+      "91704e290ce300acc58ec1b1821fbabce8893a08f3ffffe70e1e9ba1aa1ce31e"
+    ],
+    "imputed": {
+      "amh_imputed": 53,
+      "bmi_imputed": 22,
+      "attempt_imputed": 0,
+      "sperm_source_inferred": 6,
+      "okk_raised_for_thawed": 0
+    },
+    "afc_source": {
+      "afc": 48,
+      "follicles": 11
+    }
+  },
+  "unknown_columns": [
+    "Столбец 1",
+    "DOB",
+    "Husband Full Name",
+    "DOB 2",
+    "ID 2",
+    "cause of infertility",
+    "Addition ",
+    "FSH",
+    "E2 ",
+    "LG",
+    "P",
+    "Stimulation, days",
+    "Start FSH dosage",
+    "LH stim",
+    "Sum stim dosage",
+    "Trigger day/time",
+    "Trigger dosage dec",
+    "second trigger",
+    "second trigger time",
+    "Cetrotide 0.25, days",
+    "second  prep",
+    "OPU time",
+    "1pN",
+    "0pN",
+    "PGT",
+    "Embryo grade",
+    "Endometrium pattern",
+    "Endometrium on trigger day, mm",
+    "Endometrium on ET, mm",
+    "Homocystein",
+    "Embryo implanted",
+    "PRAI",
+    "DIGITAL TWIN",
+    "PGT REQUEST"
+  ],
+  "not_run": [
+    "TabPFN",
+    "TabPFN-3 regression",
+    "DNN",
+    "PGT-A",
+    "MIRI",
+    "consumable lots",
+    "agents"
+  ]
+}

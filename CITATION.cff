@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "Embryo Lab Data Analytics: a privacy-preserving IVF/ICSI laboratory analytics pipeline"
+type: software
+authors:
+  - family-names: Sergeev
+    given-names: Sergey
+license: MIT
+repository-code: "https://github.com/embryossa/embryo-lab-data"
+keywords:
+  - IVF
+  - ICSI
+  - embryology
+  - Vienna Consensus
+  - key performance indicators
+  - TabPFN
+  - digital twin
+  - clinical prediction models
+  - calibration

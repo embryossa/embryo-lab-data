@@ -6,7 +6,11 @@ import numpy as np, pandas as pd
 from scipy import stats
 
 rng = np.random.default_rng(20260720)
-B = '/sessions/nice-festive-hawking/mnt/embryo-lab-data/data/processed/benchmark/'
+from pathlib import Path
+import os
+ROOT = Path(__file__).resolve().parents[2]
+os.chdir(Path(__file__).resolve().parent)  # outputs are written next to this script
+B = str(ROOT / 'data/processed/benchmark') + '/'
 dt = pd.read_csv(B + 'dt_predictions.csv')
 qc = pd.read_csv(B + 'regression_qc.csv')
 dt['grp'] = dt.patient_id.str.extract(r'^(FRESH|FET_FC)')[0]

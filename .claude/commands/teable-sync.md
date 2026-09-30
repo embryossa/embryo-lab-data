@@ -10,7 +10,7 @@ description: Поднять self-hosted Teable + вьюер карточек (Do
 id баз не зашиты — новая клиника добавляется одной записью в конфиг.
 
 1. Проверь контейнеры: `docker ps --format "{{.Names}}"` в
-   `C:\Users\User\Desktop\IVF\AI\embryo-lab-data\teable\self-hosted`. Если
+   `teable/self-hosted` (от корня репозитория). Если
    `self-hosted-teable-1` / `-db-1` / `-cache-1` / `-cards-1` не в списке или не `Up` —
    подними: `cd teable/self-hosted && docker compose up -d`. Если у самого Docker
    Desktop ещё не поднят движок (`docker ps` падает с ошибкой pipe/daemon), сначала

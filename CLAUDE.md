@@ -130,7 +130,7 @@ OPU master или полный `dt_predictions.csv`. Финальный XLSX/HTM
   обучения; raw-выход EVO сравнивается с DT/TabPFN без отдельного калибратора.
 - DataLore reference: `notebooks/reference/Data_Twin_analytics.ipynb`; выполняемый код —
   локальный Python-модуль, а не облачный notebook.
-- Consumable lots: Airtable base `appTnM9Hp4x4jecrW` («расходные материалы» +
+- Consumable lots: Airtable-база лаборатории (ID базы/таблиц — в `config/settings.local.yaml`; «расходные материалы» +
   «Barcode Changes History»), забирается живым pull по REST API (`src/embryo/lots.py`).
   Гейт `consumable_lots.enabled` + Personal Access Token — только в
   `config/settings.local.yaml`, в репозиторий не коммитятся.

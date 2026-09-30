@@ -1,0 +1,9 @@
+source,file,sha256,rows,centre,n,matched,null_matched_age_plus3
+dt_gat_training,training_file.xlsx,368b8be2b00c5829,1172,Fertimed,423,33,3
+dt_gat_training,training_file.xlsx,368b8be2b00c5829,1172,GGRC,412,9,1
+dt_gat_training,training_file.xlsx,368b8be2b00c5829,1172,SkyFert,163,157,0
+dt_gat_training,training_file.xlsx,368b8be2b00c5829,1172,Two-Line,28,0,0
+tabpfn_context,all_df_with_KPI.xlsx,fecba98f535b0c39,16056,Fertimed,423,75,65
+tabpfn_context,all_df_with_KPI.xlsx,fecba98f535b0c39,16056,GGRC,412,0,2
+tabpfn_context,all_df_with_KPI.xlsx,fecba98f535b0c39,16056,SkyFert,163,9,12
+tabpfn_context,all_df_with_KPI.xlsx,fecba98f535b0c39,16056,Two-Line,28,0,0

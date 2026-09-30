@@ -1,0 +1,4 @@
+﻿band,chi2,dof,p,centres,lr_centre_adjusted_for_prediction
+<40%,12.2012,2,0.0022,3,"LR chi2 = 75.6, df = 3, p = 2.7e-16"
+40–60%,15.7774,2,0.0004,3,"LR chi2 = 75.6, df = 3, p = 2.7e-16"
+≥60%,46.1107,3,0.0,4,"LR chi2 = 75.6, df = 3, p = 2.7e-16"

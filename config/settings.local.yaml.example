@@ -13,9 +13,12 @@ miri_logs:
   base_dir: "G:/My Drive/Miri"
 
 # Personal Access Token из airtable.com/create/tokens (scopes: data.records:read,
-# schema.bases:read; access -> только base appTnM9Hp4x4jecrW). Без него consumable_lots
+# schema.bases:read; access -> только база лотов лаборатории). Без него consumable_lots
 # остаётся enabled: false и форензик по лотам просто не запускается.
 consumable_lots:
   enabled: true
   airtable:
-    token: "patXXXXXXXXXXXXXX.XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    base_id: "appXXXXXXXXXXXXXX"
+    items_table_id: "tblXXXXXXXXXXXXXX"     # расходные материалы
+    changes_table_id: "tblXXXXXXXXXXXXXX"   # Barcode Changes History
+    token: "patXXXXXXXXXXXXXX.XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
