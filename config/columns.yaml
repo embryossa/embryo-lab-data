@@ -33,6 +33,16 @@ canonical:
   doctor:         {aliases: ["Doctor", "Врач", "doctor"], required: false}
   sperm_source:   {aliases: ["sperm", "Sperm", "sperm_source"], required: false}  # TESE/SMF/MESA/PESA признак хирургического забора спермы
 
+  # --- описательный клинический слой (src/embryo/clinical.py) ---
+  # Только интерпретация (роль clinical-context-analyst): префикс clin_/stim_ не
+  # даёт колонкам попасть во вход DT/TabPFN/DNN. Заполнены в выгрузке 02.10.2026.
+  # Не замаплены сознательно: "cause of infertility"/"Addition " — свободный текст,
+  # не МКБ-10 (группировка по кодам дала бы мусор); триггер разнесён по
+  # "Trigger dosage dec" (доза декапептила) и "second trigger" (препарат).
+  stim_fsh_dose:      {aliases: ["Sum stim dosage"], required: false}
+  stim_duration_days: {aliases: ["Stimulation, days"], required: false}
+  clin_fsh_basal:     {aliases: ["FSH"], required: false}   # базальный ФСГ пациентки, НЕ доза
+
 # Распознавание исхода переноса. Preg=1, если: клиническая беременность ЛИБО
 # любое утвердительное "да"/"yes". Всё прочее заполненное -> 0. Пусто -> NaN.
 outcome:
