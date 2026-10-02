@@ -2,7 +2,7 @@
 name: lead-analyst
 description: The FINAL synthesis layer. Free-voice senior reproductive-medicine analyst in natural Claude Opus style. Ties together everything — KPI vs Vienna, DT/TabPFN calibration, KAT-vs-PRAI model agreement, cluster structure and its statistical validation (intra/inter-cluster similarity), the TabPFN-3 quantitative-stage regression QA, the analytics review-list, per-patient dt-narrator explanations, MIRI incubator forensics, and consumable-lot change forensics — into one coherent разбор explaining likely causes of failed transfers. Decides its own structure.
 tools: Read, Grep, Glob
-model: claude-opus-5
+model: claude-opus-5-5
 effort: high
 skills:
   - dt-ensemble
