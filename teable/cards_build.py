@@ -80,6 +80,7 @@ MODEL_ROW = [
     ("csdi", "CSDI", "диффузионная импутация"),
     ("gnn", "GNN", "граф похожих циклов"),
     ("dnn", "DNN", "независимая проверочная сеть"),
+    ("laya", "Laya", "внешний компаратор DT (laya_kan_ft), калибровка по центру; не член ансамбля"),
 ]
 
 
@@ -143,6 +144,20 @@ def _bool(v):
     if isinstance(v, str):
         return v.strip().lower() in ("true", "1", "да", "yes")
     return bool(v)
+
+
+def _laya_avail(ok, high, gap, flags) -> dict:
+    """Состояние Laya для карточки. laya_ok: None — Laya в прогоне не было,
+    False — цикл для неё непригоден (флаги объясняют почему)."""
+    if ok is None or (isinstance(ok, float) and pd.isna(ok)):
+        # Teable не отдаёт снятый чекбокс: «непригоден» тогда видно по флагам Laya.
+        if _str(flags):
+            return {"laya_ok": False, "laya_high": None, "laya_gap": None, "laya_flags": _str(flags)}
+        return {"laya_ok": None}
+    ok = ok if isinstance(ok, bool) else str(ok).strip().lower() in ("true", "1")
+    hi = high if isinstance(high, bool) else (str(high).strip().lower() in ("true", "1")
+                                              if high is not None and not (isinstance(high, float) and pd.isna(high)) else None)
+    return {"laya_ok": ok, "laya_high": hi, "laya_gap": _num(gap), "laya_flags": _str(flags)}
 
 
 def _pick(row, *names):
@@ -232,6 +247,16 @@ def build_payload(clinic: tc.Clinic, history: dict | None = None,
         cycles.append(card)
         n_archived += 1
 
+    # Прогон, сделанный до подключения Laya, не несёт её колонок в dt_predictions.csv;
+    # значение тогда берётся из самой поздней строки Predictions этого цикла в базе.
+    for c in cycles:
+        if c["prob"].get("laya") is None and c["avail"].get("laya_ok") is None:
+            last = next((h for h in reversed(c.get("hist") or [])
+                         if (h.get("laya_av") or {}).get("laya_ok") is not None), None)
+            if last:
+                c["prob"]["laya"] = _num(last.get("laya"))
+                c["avail"].update(last["laya_av"])
+
     cycles.sort(key=lambda c: (c["opu"] or "", c["name"]), reverse=True)
     return {
         "clinic": clinic.name, "code": clinic.code,
@@ -302,6 +327,7 @@ def _run_cycles(proc: str, history: dict | None, record_links: dict | None) -> l
             "csdi": _num(r.get("p_csdi")),
             "gnn": _num(_pick(r, "p_gnn_ens", "p_gnn_raw")),
             "dnn": _num(r.get("DNN")),
+            "laya": _num(r.get("Laya")),
             "tabpfn": _num(tp.get("p_tabpfn")) if tp else None,
         }
         risk = {
@@ -352,7 +378,9 @@ def _run_cycles(proc: str, history: dict | None, record_links: dict | None) -> l
             # means it produced nothing for this particular cycle.
             "avail": {"gnn": _bool(r.get("gnn_available")),
                       "csdi": _bool(r.get("csdi_available")),
-                      "dnn": _str(r.get("dnn_validation_status"))},
+                      "dnn": _str(r.get("dnn_validation_status")),
+                      **_laya_avail(r.get("laya_assessable"), r.get("laya_disagreement_high"),
+                                    r.get("laya_minus_dt_pp"), r.get("laya_flags"))},
             "review": ({"priority": _num(vrow.get("priority")),
                         "reason": _str(vrow.get("reason"))} if vrow else None),
             "ozema": ({"flag": _str(orow.get("ozema_flag")),
@@ -398,6 +426,9 @@ def fetch_history(tb: tc.Teable, base_id: str) -> dict:
             "run": run, "ts": fl.get("Timestamp"),
             "prai": fl.get("PRAI (TabPFN)"), "dt": fl.get("DIGITAL TWIN"),
             "kat": fl.get("KAT"), "bl": fl.get("med Bl"),
+            "laya": fl.get("Laya"),
+            "laya_av": _laya_avail(fl.get("Laya пригодна"), fl.get("Расхождение высокое"),
+                                   fl.get("Laya−DT, пп"), fl.get("Флаги Laya")),
         })
     for rows in out.values():
         rows.sort(key=lambda x: str(x.get("ts") or ""))
@@ -554,6 +585,7 @@ def fetch_archive(tb: tc.Teable, base_id: str) -> dict:
                 "kat": _num(pf.get("KAT")), "nvsa": _num(pf.get("NVSA")),
                 "csdi": _num(pf.get("CSDI")), "gnn": _num(pf.get("GNN")),
                 "dnn": _num(pf.get("DNN")),
+                "laya": _num(pf.get("Laya")),
                 # p_tabpfn отдельной колонкой в базе не лежит: в неё уже сведён PRAI.
                 "tabpfn": None,
             },
@@ -570,7 +602,9 @@ def fetch_archive(tb: tc.Teable, base_id: str) -> dict:
             },
             "reg": reg_out,
             "avail": {"gnn": _bool(pf.get("GNN доступен")), "csdi": _bool(pf.get("CSDI доступен")),
-                      "dnn": _str(pf.get("Статус DNN"))},
+                      "dnn": _str(pf.get("Статус DNN")),
+                      **_laya_avail(pf.get("Laya пригодна"), pf.get("Расхождение высокое"),
+                                    pf.get("Laya−DT, пп"), pf.get("Флаги Laya"))},
             "review": ({"priority": _PRIORITY_TO_NUM.get(_str(vf.get("Приоритет"))),
                         "reason": _str(vf.get("Основание"))} if vf else None),
             "ozema": ({"flag": _str(of.get("Флаг")), "oma": _str(of.get("OMA")),
@@ -781,6 +815,7 @@ function missingReason(c, k){
   if (k === 'gnn' && av.gnn === false) return 'не поднялась в прогоне';
   if (k === 'csdi' && av.csdi === false) return 'не поднялась в прогоне';
   if (k === 'dnn') return av.dnn ? 'нет оценки для цикла' : 'не запускалась';
+  if (k === 'laya') return av.laya_ok === false ? 'цикл непригоден для Laya' : 'не запускалась';
   return 'нет значения';
 }
 
@@ -807,7 +842,16 @@ function modelsBlock(c){
        Причина ищется на стороне проекта Digital Twin (флаг <code>gnn_available</code> /
        <code>csdi_available</code> в <code>dt_predictions.csv</code>).</div>`
     : '';
-  return `<div class="models">${tiles}</div>${warn}`;
+  const av = c.avail || {};
+  let laya = '';
+  if (av.laya_ok === true && av.laya_high === true)
+    laya = `<div class="note">Laya и DIGITAL TWIN заметно расходятся
+       (Laya − DT = ${av.laya_gap === null || av.laya_gap === undefined ? '—' : av.laya_gap.toFixed(1)} пп
+       после калибровки обеих по центру). На когорте RBMO и в базе Teable в этой зоне ошибка DT
+       (Brier) выше — повод перепроверить входы цикла, не вердикт.</div>`;
+  else if (av.laya_ok === false && av.laya_flags)
+    laya = `<div class="note">Laya не оценивает этот цикл: ${esc(av.laya_flags)}</div>`;
+  return `<div class="models">${tiles}</div>${warn}${laya}`;
 }
 
 function flag30(real, pred){
@@ -938,11 +982,11 @@ function historyBlock(c){
   if (h.length){
     out += `<div class="table-wrap"><table class="tbl">
       <thead><tr><th>Прогон</th><th>Когда</th><th>PRAI</th><th>DIGITAL TWIN</th>
-        <th>KAT</th><th>med Bl</th></tr></thead><tbody>` +
+        <th>KAT</th><th>Laya</th><th>med Bl</th></tr></thead><tbody>` +
       h.map(x => `<tr><td>${esc(x.run)}</td>
         <td class="muted">${esc((x.ts||'').slice(0,16).replace('T',' '))}</td>
         <td>${pct(x.prai)}</td><td>${pct(x.dt)}</td><td>${pct(x.kat)}</td>
-        <td>${n1(x.bl)}</td></tr>`).join('') + '</tbody></table></div>';
+        <td>${pct(x.laya)}</td><td>${n1(x.bl)}</td></tr>`).join('') + '</tbody></table></div>';
     if (h.length === 1)
       out += `<div class="muted" style="font-size:11.5px;margin-top:6px">
         Этот цикл пока присутствует в одном прогоне — строки добавляются

@@ -21,6 +21,10 @@ paths:
   opu_table: "data/inbox/benchmark/OPU_table.xlsx"  # обычно не существует -> автоопределённый inbox-файл
 
 external_tools:
+  laya:                                          # Laya (laya_kan_ft) — внешний компаратор DT; пути -> config/machine.local.yaml
+    enabled: true                                # мягкий сбой (run_manifest: laya_status)
+    centre: ""                           # центра нет в калибровке RBMO: Laya только для ранжирования (колонка Laya пуста, laya_raw есть)
+    restore: true                                # правила восстановления пропусков, одобрены владельцем 2026-10-14
   # Тот же внешний проект/окружение DT/TabPFN/TabPFN-3, что у клиники A —
   # абсолютные машинно-зависимые пути живут в config/machine.local.yaml (общий
   # для всех клиник, подмешивается независимо от --clinic).

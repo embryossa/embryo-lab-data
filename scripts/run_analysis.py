@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from embryo import (analytics, clinical, consult, contracts, dnn_runner, dt_api, history,
-                    incubator, ingest, kpi, lots, normalize, opu_table, ozema, pgt, privacy,
+                    incubator, ingest, kpi, laya_runner, lots, normalize, opu_table, ozema, pgt, privacy,
                     reconcile, regression_qc, report, tabpfn_regression_runner,
                     tabpfn_runner)  # noqa: E402
 from embryo import _io  # noqa: E402
@@ -870,6 +870,24 @@ def main(argv: list[str] | None = None) -> int:
             dnn_status = f"failed: {type(exc).__name__}: {exc}"
             print(f"[warn] DNN verifier skipped: {dnn_status}", file=sys.stderr)
 
+    # Laya — внешний компаратор DT (не член ансамбля L1–L7). Мягкий шаг, как DNN:
+    # сбой не гейтит прогон, но статус и покрытие уходят в run_manifest.json.
+    laya_status = "disabled"
+    laya_coverage: dict | None = None
+    lcfg = cfg["external_tools"].get("laya", {})
+    if lcfg.get("enabled"):
+        try:
+            laya_frame = laya_runner.run_laya(lcfg, predictions, private)
+            predictions = laya_runner.join_laya(predictions, laya_frame)
+            laya_coverage = laya_runner.coverage(predictions)
+            laya_status = "ok" if lcfg.get("centre") else "ok_uncalibrated"
+            print(f"[laya] оценено {laya_coverage['scored']}/{laya_coverage['cohort']} циклов, "
+                  f"непригодны {laya_coverage['not_assessable']}, "
+                  f"сильное расхождение с DT {laya_coverage['disagreement_high']}")
+        except Exception as exc:
+            laya_status = f"failed: {type(exc).__name__}: {exc}"
+            print(f"[warn] Laya skipped: {laya_status}", file=sys.stderr)
+
     enriched = reconcile.enrich_opu_table(opu, predictions)
     if args.clinic == "skyfert":
         # enrich_opu_table/ensure_opu_schema only ever look at the Title-Case
@@ -1059,6 +1077,7 @@ def main(argv: list[str] | None = None) -> int:
         # Сколько циклов когорты реально получили прогноз DNN: "valid_saved_scaler"
         # сам по себе этого не говорит (см. расчёт dnn_coverage выше).
         "dnn_coverage": dnn_coverage,
+        "laya_status": laya_status, "laya_coverage": laya_coverage,
         "digital_twin": dt_source,
         "n_lab_population": int(len(lab_cycles)),
         "warnings": report_result["warnings"],

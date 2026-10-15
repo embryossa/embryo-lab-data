@@ -18,6 +18,10 @@ paths:
   opu_table: "data/inbox/skyfert/OPU_table_master.xlsx"  # не существует -> откат на явный входной файл (нет отдельного мастер-файла у Skyfert)
 
 external_tools:
+  laya:                                          # Laya (laya_kan_ft) — внешний компаратор DT; пути -> config/machine.local.yaml
+    enabled: true                                # мягкий сбой (run_manifest: laya_status)
+    centre: "SkyFert"                           # калибровка по центру (RBMO)
+    restore: true                                # правила восстановления пропусков, одобрены владельцем 2026-10-14
   digital_twin:
     # IVF Digital Twin 7.1 — ЕДИНСТВЕННЫЙ вход DT для всех клиник (владелец, 2026-09-13):
     # пакет циклов уходит в локальную службу IVFClinicIntegration71 (подключение

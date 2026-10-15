@@ -105,7 +105,7 @@ skill `/run-analysis`; отдельный BAT проекта не создава
 19.07.2026).
 - До расчёта: `scripts/preflight.py` = 0 и `--dt-check` со статусом службы `ready`.
 - Во время: длинный прогон идёт в фоне с логом, лог проверяется, а не только код выхода.
-- После: по каждому компоненту — DT 7.1 API, TabPFN, TabPFN-3 regression, DNN/EVO,
+- После: по каждому компоненту — DT 7.1 API, TabPFN, TabPFN-3 regression, DNN/EVO, Laya,
   Airtable-лоты, MIRI (Google Drive MCP), ПГТ-А портал (claude-in-chrome), Teable —
   сверить фактическое покрытие свежего прогона (`run_manifest.json`, число строк/циклов
   в выходах, mtime) с ожидаемым и привести пользователю таблицу статусов:
@@ -144,6 +144,13 @@ OPU master или полный `dt_predictions.csv`. Финальный XLSX/HTM
   `dnn_verifier.scaler_path`. Текущий `training_scaler.joblib` — реконструкция
   (2026-07-17, см. `config/settings.local.yaml`), не сохранённый оригинал
   обучения; raw-выход EVO сравнивается с DT/TabPFN без отдельного калибратора.
+- Laya (`laya_kan_ft`, проект Laya, своё `.venv`): внешний компаратор DT, НЕ член
+  ансамбля L1–L7 и не замена DT; адаптер `external/laya/laya_batch.py` вызывает тот же
+  `service/laya_ivf.assess`, что MCP `laya_ivf`. Гейт/центр/restore — `external_tools.laya`
+  в settings.yaml клиники, пути — `config/machine.local.yaml`; мягкий сбой
+  (`laya_status` в run_manifest). Валидация 2026-10-15 на 1 387 циклах Teable:
+  внутрицентровый AUC Laya 0.555 vs DT 0.559; `laya_disagreement_high` — повод перепроверить
+  цикл (в этой зоне Brier DT выше), не вердикт. Вероятность непригодного цикла не публикуется.
 - DataLore reference: `notebooks/reference/Data_Twin_analytics.ipynb`; выполняемый код —
   локальный Python-модуль, а не облачный notebook.
 - Consumable lots: Airtable-база лаборатории (ID базы/таблиц — в `config/settings.local.yaml`; «расходные материалы» +

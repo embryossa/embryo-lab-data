@@ -189,6 +189,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[warn] DNN skipped: {dnn_status}", file=sys.stderr)
 
     predictions = off_cohort.restore_facts(predictions, off)
+
+    # ---- Laya (внешний компаратор DT, мягкий сбой) — по уже восстановленным фактам ---------
+    laya_status, laya_coverage = "disabled", None
+    lcfg = cfg["external_tools"].get("laya", {})
+    if lcfg.get("enabled"):
+        try:
+            from embryo import laya_runner
+            predictions = laya_runner.join_laya(predictions, laya_runner.run_laya(lcfg, predictions, private))
+            laya_coverage = laya_runner.coverage(predictions)
+            laya_status = "ok" if lcfg.get("centre") else "ok_uncalibrated"
+        except Exception as exc:  # noqa: BLE001 - компаратор не блокирует прогноз
+            laya_status = f"failed: {type(exc).__name__}: {exc}"
+            print(f"[warn] Laya skipped: {laya_status}", file=sys.stderr)
     enriched = opu_table.ensure_opu_schema(reconcile.enrich_opu_table(opu, predictions))
     enriched["cohort_scope_label"] = enriched["_key"].map(off.set_index("_key")["cohort_scope_label"])
     outputs = reconcile.write_reconciled_outputs(
@@ -217,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         "tabpfn_scored": int(pd.to_numeric(predictions["PRAI"], errors="coerce").notna().sum()),
         "regression_status": regression_status,
         "dnn_status": dnn_status,
+        "laya_status": laya_status, "laya_coverage": laya_coverage,
         "artifacts": {Path(p).name: str(p) for p in outputs.values()},
     }
     _io.atomic_write_text(json.dumps(manifest, ensure_ascii=False, indent=2), processed / "run_manifest.json")

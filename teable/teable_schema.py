@@ -77,7 +77,7 @@ OZEMA_FLAG_CHOICES = [{"name": n, "color": "redLight1"} for n in
                       {"name": "н/д", "color": "grayLight1"}]
 
 MODEL_CHOICES = [{"name": m} for m in
-                 ["MC", "Bayes", "KAT", "NVSA", "CSDI", "GNN", "DT", "TabPFN", "DNN", "PRAI"]]
+                 ["MC", "Bayes", "KAT", "NVSA", "CSDI", "GNN", "DT", "TabPFN", "DNN", "PRAI", "Laya"]]
 
 FILE_TYPE_CHOICES = [{"name": n, "color": c} for n, c in [
     ("dt_predictions", "blueLight1"), ("tabpfn_predictions", "cyanLight1"),
@@ -176,6 +176,8 @@ def schema(tz="Asia/Tashkent"):
             # showing who the patient is, what the models said and whether the
             # cycle needs attention — without opening any linked table.
             f("PRAI (посл.)", num(3)), f("DIGITAL TWIN (посл.)", num(3)),
+            # Laya (laya_kan_ft) — внешний компаратор DT; пусто, если цикл для Laya непригоден.
+            f("Laya (посл.)", num(3)),
             # Why the snapshot looks the way it does: empty for the report cohort,
             # filled for cycles scored by the off-cohort layer (scripts/
             # run_off_cohort.py) — e.g. "Без переноса, 2PN=0: только воронка DT".
@@ -199,6 +201,14 @@ def schema(tz="Asia/Tashkent"):
             f("Bayes mean", num(3)), f("Bayes CI низ", num(3)), f("Bayes CI верх", num(3)),
             f("KAT", num(3)), f("NVSA", num(3)), f("CSDI", num(3)), f("GNN", num(3)),
             f("DNN", num(3)), f("Статус DNN", txt()),
+            # Laya (laya_kan_ft): внешний компаратор DT, не член ансамбля L1–L7.
+            # «Laya» — с калибровкой по центру (RBMO, сдвиг интерсепта), «Laya сырая» — без неё.
+            # Для непригодного цикла (нет обязательного входа или перенос невозможен) обе пусты.
+            # «Laya−DT, пп» и «Расхождение высокое» — обе модели после калибровки по центру;
+            # порог |logit| 0.354 (верхняя треть RBMO, где Brier DT выше) — повод перепроверить, не вердикт.
+            f("Laya", num(3)), f("Laya сырая", num(3)), f("Laya пригодна", check()),
+            f("Laya−DT, пп", num(1)), f("Расхождение высокое", check()),
+            f("Флаги Laya", longtxt()),
             # Availability flags straight from the Digital Twin run: without them
             # an empty GNN/CSDI column is indistinguishable from "the model said
             # nothing for this cycle", and the model silently not loading at all
@@ -274,7 +284,7 @@ def table_keys():
 # that view (the data is still in the table, just out of the way).
 _SEARCH_COLUMNS = [
     "ID пациента", "Имя", "Дата OPU", "Возраст", "AMH", "Исход",
-    "PRAI (посл.)", "DIGITAL TWIN (посл.)", "Охват прогноза", "Приоритет ревью", "Флаг OZEMA",
+    "PRAI (посл.)", "DIGITAL TWIN (посл.)", "Laya (посл.)", "Охват прогноза", "Приоритет ревью", "Флаг OZEMA",
     "OCC", "2pN", "Bl", "Good Bl", "Кластер", "Карточка",
     "Эмбриолог", "Врач", "Дата ET", "Прогонов", "cycle_uid",
 ]

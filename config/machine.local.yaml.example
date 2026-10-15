@@ -1,5 +1,5 @@
 # config/machine.local.yaml.example — ШАБЛОН машинно-зависимых путей к внешним
-# инструментам (IVF Digital Twin, TabPFN, DNN verifier, TabPFN-3 regression).
+# инструментам (IVF Digital Twin, TabPFN, DNN verifier, TabPFN-3 regression, Laya).
 #
 # Скопируйте в config/machine.local.yaml (в .gitignore, не коммитится) и подставьте
 # реальные пути этого ПК. Это ЕДИНСТВЕННЫЙ файл, который нужно поменять при переносе
@@ -53,3 +53,9 @@ external_tools:
     # TabPFN-3: количественный прогноз стадий воронки (MII/2PN/Bl/Good Bl/Frozen).
     project_dir: "C:/path/to/PycharmProject/tabpfn"
     run_cmd: '"C:/path/to/PycharmProject/tabpfn/.venv/Scripts/python.exe" tabpfn3_ivf_regression_report_CPU_16K.py --opu-path {input} --output-csv {output}'
+
+  laya:
+    # Laya (laya_kan_ft) — внешний компаратор DT: адаптер external/laya/laya_batch.py
+    # в окружении проекта Laya (её .venv). Гейт/центр/restore — в settings.yaml клиники.
+    project_dir: "C:/path/to/Laya/service"
+    run_cmd: '"C:/path/to/Laya/.venv/Scripts/python.exe" "{repo_root}/external/laya/laya_batch.py" --service-dir "C:/path/to/Laya/service" --input {input} --output {output}'

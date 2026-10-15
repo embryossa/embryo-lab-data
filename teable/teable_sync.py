@@ -120,6 +120,13 @@ PRED_COLS = {
     "csdi_available": ["csdi_available"],
     "dnn":          ["DNN"],
     "dnn_status":   ["dnn_validation_status"],
+    # Laya (embryo.laya_runner): внешний компаратор DT
+    "laya":         ["Laya"],
+    "laya_raw":     ["laya_raw"],
+    "laya_ok":      ["laya_assessable"],
+    "laya_gap_pp":  ["laya_minus_dt_pp"],
+    "laya_high":    ["laya_disagreement_high"],
+    "laya_flags":   ["laya_flags"],
     "dt_headline":  ["DIGITAL TWIN", "p_digital_twin", "DT"],
     "ohss_mod":     ["ohss_moderate"],
     "ohss_sev":     ["ohss_severe"],
@@ -294,7 +301,7 @@ def clean(fields: dict) -> dict:
 # no Predictions/PvR row and does not count that run in "Прогонов".
 MODEL_OUTPUT_KEYS = ("med_okk", "med_mii", "med_pn2", "med_blasts", "med_good", "prai",
                      "dt_headline", "p_per_transfer", "bayes_mean", "p_kat", "dnn",
-                     "cluster", "no_blast")
+                     "laya", "cluster", "no_blast")
 
 
 def has_model_output(pred: dict) -> bool:
@@ -497,6 +504,7 @@ def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
             # Latest-run snapshot — what the "Поиск пациенток" tab shows
             "PRAI (посл.)": prai if prai is not None else num(tp.get("p_tabpfn")),
             "DIGITAL TWIN (посл.)": num(pred.get("dt_headline")),
+            "Laya (посл.)": num(pred.get("laya")),
             "Охват прогноза": (text(pred.get("scope_label"))
                                or ("Когорта отчёта" if scored and not scope else None)),
             "Ширина CI, пп": num(pred.get("ci_width")),
@@ -509,6 +517,11 @@ def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
             "Прогонов": None if cycles_only or not scored else prior_runs.get(str(uid), 0) + 1,
             "Последний прогон": None if cycles_only or not scored else run_id,
         })
+        if not cycles_only and scored and pred.get("laya_ok") is not None \
+                and num(pred.get("laya")) is None:
+            # Laya в этом прогоне была, но цикл для неё непригоден: снимок предыдущего
+            # прогона не должен стоять рядом со свежим DT (clean() пустое не пишет).
+            fields["Laya (посл.)"] = None
         if pid in cyc_index:
             updates.append((cyc_index[pid], fields))
         else:
@@ -563,6 +576,12 @@ def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
             "GNN": num(pred.get("p_gnn")),
             "DNN": num(pred.get("dnn")),
             "Статус DNN": text(pred.get("dnn_status")),
+            "Laya": num(pred.get("laya")),
+            "Laya сырая": num(pred.get("laya_raw")),
+            "Laya пригодна": flag(pred.get("laya_ok")),
+            "Laya−DT, пп": num(pred.get("laya_gap_pp")),
+            "Расхождение высокое": flag(pred.get("laya_high")),
+            "Флаги Laya": text(pred.get("laya_flags")),
             "GNN доступен": flag(pred.get("gnn_available")),
             "CSDI доступен": flag(pred.get("csdi_available")),
             "Кластер": ts.CLUSTER_LABELS.get(str(cl).replace(".0", "").lower()) if cl else None,
@@ -692,7 +711,7 @@ def write_calibration(tb, table_id, patients, run_id):
         return
     model_cols = {"MC": "p_per_transfer", "Bayes": "bayes_mean", "KAT": "p_kat",
                   "NVSA": "p_nvsa", "CSDI": "p_csdi", "GNN": "p_gnn",
-                  "DT": "dt_headline", "TabPFN": "prai", "DNN": "dnn"}
+                  "DT": "dt_headline", "TabPFN": "prai", "DNN": "dnn", "Laya": "laya"}
     rows_in = [(p["pred"], p["real"].get("preg")) for p in patients.values()
                if p["real"].get("preg") is not None and pd.notna(p["real"].get("preg"))]
     if len(rows_in) < 5:

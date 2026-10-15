@@ -125,6 +125,7 @@ def check_external_tools(clinic: str | None) -> list[str]:
         ("tabpfn", "TabPFN", "launch", ["project_dir", "results_dir"]),
         ("dnn_verifier", "DNN (EVO)", "enabled", ["project_dir", "model_path", "scaler_path"]),
         ("tabpfn_regression", "TabPFN-3 regression", "enabled", ["project_dir"]),
+        ("laya", "Laya (компаратор DT)", "enabled", ["project_dir"]),
     ]
     for section, label, gate, path_keys in checks:
         tool = tools.get(section) or {}

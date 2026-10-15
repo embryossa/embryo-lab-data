@@ -20,6 +20,10 @@ paths:
   opu_table: "data/inbox/fertimed/OPU_table.xlsx"  # обычно не существует -> используется автоопределённый inbox-файл
 
 external_tools:
+  laya:                                          # Laya (laya_kan_ft) — внешний компаратор DT; пути -> config/machine.local.yaml
+    enabled: true                                # мягкий сбой (run_manifest: laya_status)
+    centre: "Fertimed"                           # калибровка по центру (RBMO)
+    restore: true                                # правила восстановления пропусков, одобрены владельцем 2026-10-14
   # Тот же внешний проект IVF Digital Twin, что и у клиники A — фильтрация по
   # "_key" (Номер карты пациента + Дата пункции) в run_analysis.py уже
   # изолирует строки текущего прогона от накопленной истории инструмента.

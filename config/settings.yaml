@@ -60,6 +60,12 @@ external_tools:
     run_cmd: ""                                # шаблон с {model}/{scaler}/{repo_root} -> config/machine.local.yaml
     output: "data/processed/evo_predictions.csv"
     scaler_path: ""
+  laya:                                          # Laya (laya_kan_ft) — внешний компаратор DT, не член ансамбля L1–L7
+    enabled: true                                # мягкий сбой: при ошибке шаг пропускается (run_manifest: laya_status)
+    project_dir: ""                              # Laya/service -> config/machine.local.yaml
+    run_cmd: ""                                  # шаблон -> config/machine.local.yaml
+    centre: "Two-Line"                           # калибровка по центру (RBMO); без центра — только ранжирование
+    restore: true                                # правила восстановления пропусков, одобрены владельцем 2026-10-14
   tabpfn_regression:                             # TabPFN-3: количественный прогноз стадий (MII/2PN/Bl/Good Bl/Frozen)
     enabled: true                                # мягкий сбой: при ошибке шаг пропускается, остальной пайплайн продолжается
     project_dir: ""
