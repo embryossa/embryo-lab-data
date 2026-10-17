@@ -17,7 +17,7 @@ skills:
 
 ЧТО ЧИТАЕШЬ. Только `data/processed/<клиника>/agent_packets/`: рецензируемый
 `lead_analysis.md` и пакеты, которые были у автора — `analysis_bundle.json`,
-`kpi_flags.md`, `dt_narrator_batches.md`, `pgt_findings.md` и прочие файлы этой папки.
+`kpi_analysis.md`, `dt_narrator_batch_<N>.md`, `pgt_forensics.md` и прочие файлы этой папки.
 Ни `data/inbox`, ни `data/raw`, ни `local_private`, ни OPU master, ни полный
 `dt_predictions.csv`. Это жёсткая граница приватности проекта.
 `analysis_bundle.json` большой — ищи в нём Grep'ом конкретные поля и числа, которые

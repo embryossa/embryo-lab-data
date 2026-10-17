@@ -121,6 +121,16 @@ IVF Digital Twin для всех клиник и всех команд — то�
    каждую пачку, передав ей в задании ровно её список `cycle_uid` (не по одному вызову на
    пациента). Пачки независимы — можно вызывать параллельно. При <=10 пациентах в
    review-list это один вызов.
+   **Сохранение выходов ролей — работа оркестратора.** У всех ролей, кроме dt-narrator,
+   только Read/Grep/Glob (намеренно: агент не должен иметь права записи рядом с
+   пакетами). Роль возвращает полный markdown последним сообщением; ты сам записываешь
+   его через Write в папку `agent_packets` текущего прогона:
+   kpi-analyst → `kpi_analysis.md`, incubator-forensics → `miri_forensics.md`,
+   consumable-lots-forensics → `lot_forensics.md`, pgt-forensics → `pgt_forensics.md`,
+   clinical-context-analyst → `clinical_context_analysis.md`, model-auditor →
+   `model_audit.md`, lead-analyst → `lead_analysis.md`; dt-narrator пишет
+   `dt_narrator_batch_<N>.md` сам. После записи проверь mtime каждого файла: файл старше
+   начала прогона — не сохранён. Фраза агента «файл сохранён» доказательством не является.
 4a. Сохрани итог lead-analyst в `agent_packets/lead_analysis.md` и запусти по нему
    `interpretation-critic` (Opus) — состязательную проверку интерпретации против тех же
    пакетов. Роль ищет ровно то, что дороже всего стоит клинике: числа, не совпадающие с
@@ -162,3 +172,14 @@ Similar Cases, Mann-Whitney intra/inter-cluster), Прогноз беремен�
 TabPFN-3: прогноз протокола (per-stage P10-P90 QA), Review-list, MIRI 6391,
 Партии расходников, OZEMA, Итоговая
 интерпретация; стиль/палитра — Claude.ai warm/clay), `run_manifest.json`.
+
+Неподвижные решения владельца по HTML-отчёту (`report.py`):
+- Стиль/палитра — тёплая Claude.ai (`--clay:#d97757` и токены её дизайн-системы); не
+  менять без прямого запроса владельца.
+- Вкладка MIRI показывает только реальные эпизоды, без сводки по циклам.
+- Вкладка «Прогноз беременности» берёт воронку реал/прогноз из P50 TabPFN-3 regression
+  ЭТОГО отчёта, не из старых полей Digital Twin `med_*` — это два разных источника
+  прогноза воронки, не смешивать.
+- Дискриминативные метрики моделей (Brier, ROC-AUC, Acc@0.5 и т.п.) живут только в
+  таблице «Калибровка» вкладки «Модели и калибровка»; lead-analyst на них не опирается
+  (правило и обоснование — в `.claude/agents/lead-analyst.md`).
