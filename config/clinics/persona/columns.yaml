@@ -1,0 +1,130 @@
+# config/clinics/persona/columns.yaml — колонки клиники PERSONA. Независим от
+# config/columns.yaml и других клиник. Обоснование каждого решения — docs/PERSONA.md
+# (сопоставление подтверждено владельцем 2026-10-19).
+#
+# Выгрузка PERSONA устроена иначе, чем у остальных клиник: одна строка = одна
+# ПРОГРАММА (ТВП, КРИО ПЕ, Без ТВП, ...), а лабораторная воронка разложена по
+# блокам метода (кЭКО / И / DO / ЗО / ∑). Поэтому файл состоит из двух частей:
+#
+#   export:    сырой лист "нов<год>" -> промежуточная (staged) таблица.
+#              Читает только src/embryo/clinics/persona.py::stage_export
+#              (scripts/persona_stage.py).
+#   canonical: staged-таблица -> канонический кадр пайплайна. Колонки staged-файла
+#              уже носят канонические имена, поэтому alias-ов здесь нет —
+#              ingest.resolve_columns принимает каноническое имя как есть.
+
+export:
+  # Лист с данными года. Остальные листы книги — шаблоны и справочники.
+  sheet_pattern: "^нов(\\d{4})$"
+  # Строка заголовка ищется в первых 20 строках листа (в 2025 она вторая).
+  header_marker: "Категория программы"
+  # Пустой заголовок прямо перед этой колонкой — "Врач ТВП" (так в выгрузке 2025).
+  blank_header_before: {column: "Эмбриолог ТВП", name: "Врач ТВП"}
+
+  # Колонки уровня программы: каноническое имя <- точные варианты заголовка
+  # (после схлопывания пробелов). Варианты — реальные заголовки 2023/2024/2025.
+  scalar:
+    patient_name:      ["ФИО", "ФИО пациента"]   # PHI: только для локального ключа
+    dob:               ["Год рождения"]           # PHI: только для локального ключа
+    program_date:      ["Дата Программы"]         # ТВП: дата пункции; КРИО ПЕ: дата переноса
+    treatment_type:    ["Категория программы"]
+    program:           ["Программа"]
+    status:            ["Cтатус"]                 # латинская "C" — так в выгрузке
+    fertilization_method_raw: ["Метод опл"]       # только справочно; метод берётся из блоков
+    embryologist:      ["эмбр опл"]               # эмбриолог оплодотворения
+    embryologist_opu:  ["Эмбриолог ТВП"]
+    doctor:            ["Врач ТВП"]
+    doctor_program:    ["ВРАЧ", "Врач программы/стимуляции/ТЕЗЕ"]
+    age:               ["Возр пациентов"]
+    bmi:               ["ИМТ жены"]
+    amh:               ["АМГ"]                    # текст, десятичная запятая
+    fsh:               ["ФСГ"]
+    attempt_no:        ["Номер попытки"]
+    attempt_in_clinic: ["В PERSONE"]
+    oocyte_source_raw: ["Источник Клеток"]
+    surrogate_raw:     ["Себе/СМ"]
+    donor_sperm_code:  ["КОД ДС/ ФИО"]            # PHI-код: только признак "есть/нет"
+    tesa_material:     ["Наличие материала (TESA)"]
+    tesa_ivf_cryo:     ["IVF/КРИО TESA"]
+    cai:               ["CaI"]
+    miri:              ["Miri 6/12"]
+    time_lapse:        ["TL"]
+    cook:              ["Cook"]
+    et_or_cancel:      ["ОП/ЕТ"]
+    date_et:           ["Дата переноса"]
+    transfer_day:      ["День ПЕ"]
+    transferred_fet:   ["FET Кол-во эмб на ПЭ после разморозки", "Кол-во эмб на FET"]
+    termination_reason: ["Причина отмена ЕТ"]
+    hcg_result:        ["результат ХГЧ"]
+    us2_result:        ["результат УЗИ 2"]
+    ectopic:           ["внемат.беременность"]
+    heartbeat_us3:     ["ЖК УЗИ 3"]
+
+  # Блоки лабораторной воронки: колонка = "<префикс> <стем>" (регулярные
+  # выражения, полное совпадение после схлопывания пробелов). Каждому полю
+  # обязано соответствовать РОВНО ОДНА колонка, иначе staging падает.
+  blocks:
+    ivf:   {prefix: "кЭКО", method: "IVF"}
+    icsi:  {prefix: "И", method: "ICSI"}           # ИКСИ и ПИКСИ
+    donor: {prefix: "DO", method: null}             # реципиенты донорских ооцитов
+    oocyte_freeze: {prefix: "ЗО", method: null}     # заморозка ооцитов: без оплодотворения
+    total: {prefix: "∑", method: null}              # итог; только для сверки кЭКО+И+DO при staging
+  stems:
+    occ:         "Получено ооцитов( пац /ДО)?"
+    mii:         "Зрелых \\(MII\\)"
+    two_pn:      "Норм\\.(опл|л)\\."
+    degrade:     "атрез\\."                         # решение владельца: -> DegR
+    cleavage_d3: "[Дд]робление"
+    bl_total:    "Выход б/ц"
+    bl_good:     "Бласт н\\.луч качества минимум 3ВВ"  # Good Bl = >=3BB (владелец)
+    et_d3_4:     "ПЭ ?3-4 сутки"
+    et_d5_6:     "ПЭ ?5-6 сутки"
+    frozen:      "[nТ] ?заморож\\.эмбр"
+  # У кЭКО колонка дегенерации — без префикса ("атрез."), сразу после "кЭКО Норм.опл.".
+  unprefixed: {ivf: [degrade]}
+  # Блок ЗО несёт только эти поля.
+  block_fields: {oocyte_freeze: [occ, mii]}
+  # "Аномал.опл." сознательно НЕ сопоставляется: объединяет 1PN/3PN и др.,
+  # к 3pN не приравнивается (решение владельца 2026-10-19) -> 3pNR недоступен.
+
+canonical:
+  patient_id:       {required: true}    # локальный ключ пациентки (ФИО|дата рождения)
+  date_opu:         {required: true}
+  age:              {required: true}
+  occ:              {required: true}
+  two_pn:           {required: true}
+  bl_total:         {required: true}
+  bl_good:          {required: true}
+  patient_name:     {required: false}
+  attempt_no:       {required: false}
+  amh:              {required: false}
+  bmi:              {required: false}
+  fsh:              {required: false}
+  mii:              {required: false}
+  inseminated:      {required: false}
+  degrade:          {required: false}
+  cleavage_d3:      {required: false}
+  frozen:           {required: false}
+  transferred:      {required: false}
+  transfer_day:     {required: false}
+  date_et:          {required: false}
+  embryologist:     {required: false}
+  doctor:           {required: false}
+  fertilization_method: {required: false}
+  treatment_type:   {required: false}
+  sperm_source:     {required: false}
+  oocyte_source:    {required: false}
+  Preg:             {required: false}
+  afc_from_occ:     {required: false}   # оценка AFC = ОКК x коэффициент, только для DT
+
+# Исключения таблиц компетентности (kpi.competency_exclusion_mask). У PERSONA
+# метод берётся из блока (IVF/ICSI), токенов no-retrieval/freeze-all в нём нет.
+# Freeze-all исключается по флагу программы (решение владельца 2026-10-19):
+# ОП/ЕТ = ОП и заморожен >= 1 эмбрион (persona.stage_export). Программы без
+# ооцитов (2PN нет) уходят из таблиц эмбриологов общим фильтром 2PN.
+competency_exclusion:
+  no_retrieval_tokens: []
+  freeze_all_tokens: []
+  freeze_all_flag_column: "freeze_all"
+  surgical_sperm_tokens: ["TESA"]
+  embryologist_only_treatment_tokens: []
