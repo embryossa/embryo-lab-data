@@ -42,7 +42,9 @@
   = пол или отметка внематочной → 1; ХГЧ «отр» или УЗИ «отр» → 0; иначе пропуск.
 - **AFC в выгрузке нет**, фолликулов тоже («ТФС в день триггера» — не фолликулы: дробные
   значения, заполнена у криопереносов; вероятно толщина эндометрия). Для DT принято
-  `afc_from_occ = round(собственные ОКК × 1.16)` — коэффициент ΣКАФ/ΣОКК на Fertimed
+  `afc_from_occ = round(собственные ОКК × 1.16)`, у цикла только на донорских ооцитах —
+  `round(ОКК донора × 1.16)` с флагом `afc_from_donor_occ` (AFC донора при возрасте
+  реципиентки — двойная условность, называть в интерпретации) — коэффициент ΣКАФ/ΣОКК на Fertimed
   (обоснование и разбивка — комментарий в `settings.yaml`). Колонка идёт только во вход
   DT (`impute.afc_columns`, флаг `afc_source=afc_from_occ`), не в лабораторные KPI и не в
   импутацию АМГ. OCCR недоступен.
@@ -73,6 +75,9 @@ python scripts/run_analysis.py data/processed/persona/local_private/staged/perso
 ```
 
 Демо-дашборд: `ivf-lab-kpi-ews-demo`, `--input <demo_export/persona_<год>.csv> --name persona_<год>`.
+Laya (уровень цикла, решение владельца): `scripts/ews_laya.py --name persona_<год>_cycles
+--input <demo_export/persona_<год>_cycles.csv> --impute-dt71 --centre none` — фолликулы по
+правилу DT 7.1 `rint(ОКК/0.846)` (согласие владельца 2026-10-19); калибровки центра PERSONA нет.
 
 ## Открыто
 

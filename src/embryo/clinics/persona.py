@@ -48,7 +48,7 @@ CONTEXT_COLUMNS = {
     "fertilization_method_raw", "embryologist_opu", "doctor_program", "oocyte_source_raw", "cai",
     "et_or_cancel", "termination_reason", "hcg_result", "us2_result", "heartbeat_us3",
     "attempt_in_clinic", "miri", "time_lapse", "cook", "surrogate", "donor_sperm", "transferred_fet",
-    "amh_imputed", "bmi_imputed", "freeze_all",
+    "amh_imputed", "bmi_imputed", "freeze_all", "afc_from_donor_occ",
 }
 
 
@@ -238,9 +238,16 @@ def stage_export(raw: pd.DataFrame, columns_cfg: dict, settings_cfg: dict) -> pd
     program_frozen = out[[f"{p}_frozen" for p in LAB_PARTS]].sum(axis=1, min_count=1)
     out["freeze_all"] = out["et_or_cancel"].eq("ОП").fillna(False) & program_frozen.gt(0)
 
+    # AFC для DT = ОКК x коэффициент (решения владельца 2026-10-19). Основа —
+    # собственные ОКК пункции; у цикла только на донорских ооцитах — ОКК донора
+    # (флаг afc_from_donor_occ: AFC донора при возрасте реципиентки — условность).
     own_occ = out[[f"{p}_occ" for p in OWN_OOCYTE_PARTS]].sum(axis=1, min_count=1)
+    base = own_occ.where(own_occ > 0)
+    from_donor = base.isna() & out["donor_occ"].gt(0)
+    base = base.where(~from_donor, out["donor_occ"])
     ratio = float((settings_cfg.get("persona") or {})["afc_per_occ"])
-    out["afc_from_occ"] = (own_occ * ratio).round().where(own_occ > 0)
+    out["afc_from_occ"] = (base * ratio).round()
+    out["afc_from_donor_occ"] = from_donor
     return out
 
 
@@ -387,6 +394,32 @@ DEMO_COLUMNS = {
     "Embryologist": "embryologist", "Doctor": "doctor", "Age": "age", "AMH": "amh", "BMI": "bmi",
     "# Attempt": "attempt_no", "Oocyte source": "oocyte_source_demo", "Sperm Source": "sperm_source",
 }
+
+
+LAYA_COLUMNS = {
+    "Cycle ID": "cycle_ref", "Date OPU": "date_opu", "IVF/ICSI": "fertilization_method",
+    "OCC": "occ", "MII": "mii", "Inseminated": "inseminated", "2PN": "two_pn", "Deg": "degrade",
+    "Cleavage": "cleavage_d3", "Bl": "bl_total", "Good Bl": "bl_good", "Cryo": "frozen",
+    "ET": "transferred", "Embryologist": "embryologist", "Doctor": "doctor", "Age": "age",
+    "AMH": "amh", "BMI": "bmi", "# Attempt": "attempt_no", "Oocyte source": "oocyte_source_demo",
+    "Sperm Source": "sperm_source", "Preg": "Preg",
+}
+
+
+def laya_export(staged: pd.DataFrame, secret: bytes) -> pd.DataFrame:
+    """Обезличенный вход Laya в ivf-lab-kpi-ews-demo на уровне ЦИКЛА (решение владельца
+    2026-10-19): строка = программа со свежим переносом и известным исходом, воронка —
+    сумма кЭКО/И/DO. Колонку "Preg" демо не сопоставляет; она нужна только для локальной
+    сверки прогноза Laya с исходом по номеру строки."""
+    programs = program_frame(staged)
+    transferred = pd.to_numeric(programs["transferred"], errors="coerce")
+    p = programs.loc[transferred.gt(0) & programs["Preg"].notna()].reset_index(drop=True)
+    ref = (p["patient_id"].astype("string") + "#"
+           + pd.to_datetime(p["date_opu"], errors="coerce").dt.strftime("%Y%m%d").fillna("NA") + "#cycle")
+    p["cycle_ref"] = ref.map(lambda v: privacy.make_cycle_uid(v, secret))
+    p["oocyte_source_demo"] = p["oocyte_source"].map({"donor": "Donor", "own": "Own", "own+donor": "Own+Donor"})
+    p["date_opu"] = pd.to_datetime(p["date_opu"], errors="coerce").dt.strftime("%Y-%m-%d")
+    return pd.DataFrame({out: p[src] for out, src in LAYA_COLUMNS.items()})
 
 
 def demo_export(staged: pd.DataFrame, secret: bytes, columns_cfg: dict | None = None) -> pd.DataFrame:

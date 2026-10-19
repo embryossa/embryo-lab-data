@@ -170,3 +170,22 @@ def test_stage_sets_freeze_all_from_cancel_and_frozen(workbook):
     raw.loc[1, "ОП/ЕТ"] = "ОП"                        # перенос отменён, заморожено 0 + 3
     raw.loc[2, "ОП/ЕТ"] = "ОП"                        # криоперенос: своей заморозки нет
     assert list(persona.stage_export(raw, COLUMNS_CFG, SETTINGS_CFG)["freeze_all"]) == [False, True, False]
+
+
+def test_afc_from_donor_occ_only_without_own_oocytes(workbook):
+    raw = persona.read_export(workbook, COLUMNS_CFG)
+    for col in [c for c in raw.columns if c.startswith("И ")]:
+        raw.loc[1, col] = None                        # вторая программа — только донорские ооциты
+    staged = persona.stage_export(raw, COLUMNS_CFG, SETTINGS_CFG)
+    assert staged.loc[1, "afc_from_occ"] == round(8 * 1.16) and bool(staged.loc[1, "afc_from_donor_occ"])
+    assert not bool(staged.loc[0, "afc_from_donor_occ"])
+    assert pd.isna(staged.loc[2, "afc_from_occ"])     # криоперенос: ОКК нет
+
+
+def test_laya_export_is_cycle_level_with_outcome_and_no_phi(staged):
+    laya = persona.laya_export(staged, b"secret")
+    assert len(laya) == 2                             # обе свежие программы с переносом и исходом
+    assert list(laya["2PN"]) == [7, 9] and list(laya["Inseminated"].fillna(-1)) == [10, -1]
+    assert list(laya["Preg"]) == [1.0, 0.0]
+    assert list(laya["Oocyte source"]) == ["Own", "Own+Donor"]
+    assert "Тестова" not in laya.to_csv(index=False)

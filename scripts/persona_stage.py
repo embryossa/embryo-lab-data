@@ -5,7 +5,8 @@
 
 Пишет (правила — docs/PERSONA.md):
   <staged_dir>/persona_<год>.xlsx      вход scripts/run_analysis.py --clinic persona (PHI, local_private)
-  <demo_export_dir>/persona_<год>.csv  вход ivf-lab-kpi-ews-demo (без ФИО/даты рождения)
+  <demo_export_dir>/persona_<год>.csv  вход ivf-lab-kpi-ews-demo (строка = блок метода)
+  <demo_export_dir>/persona_<год>_cycles.csv  вход Laya (строка = цикл со свежим переносом и исходом)
 В консоль — только агрегаты: число программ, блоков, сверка ∑, покрытие исхода и AFC.
 Ничего не запускает дальше: пайплайны стартуют отдельно, после подтверждения владельца.
 """
@@ -95,8 +96,11 @@ def main(argv: list[str] | None = None) -> int:
         out = _io.atomic_write_excel({"staged": part}, staged_dir / f"persona_{year}.xlsx")
         demo = persona.demo_export(part, secret, columns_cfg)
         demo_out = _io.atomic_write_csv(demo, demo_dir / f"persona_{year}.csv")
+        laya = persona.laya_export(part, secret)
+        _io.atomic_write_csv(laya, demo_dir / f"persona_{year}_cycles.csv")
         print(f"[persona] {year}: {json.dumps(_summary(part, columns_cfg), ensure_ascii=False)}")
-        print(f"[persona] {year}: staged -> {out}; demo -> {demo_out} ({len(demo)} строк)")
+        print(f"[persona] {year}: staged -> {out}; demo -> {demo_out} ({len(demo)} строк); "
+              f"циклы для Laya -> persona_{year}_cycles.csv ({len(laya)} строк)")
     return 0
 
 
