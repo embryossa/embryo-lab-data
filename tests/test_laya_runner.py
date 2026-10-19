@@ -61,8 +61,17 @@ def test_run_and_join_laya(tmp_path):
     # непригодный цикл: вероятности не публикуются, флаг объясняет почему
     assert pd.isna(a.loc["CYC-B", "Laya"]) and pd.isna(a.loc["CYC-B", "laya_raw"])
     assert "required input" in a.loc["CYC-B", "laya_flags"]
-    assert laya_runner.coverage(joined) == {"scored": 1, "cohort": 2, "not_assessable": 1,
-                                            "disagreement_high": 1}
+    assert laya_runner.coverage(joined) == {"scored": 1, "scored_centre_calibrated": 1, "cohort": 2,
+                                            "not_assessable": 1, "disagreement_high": 1}
+
+
+def test_coverage_without_centre_counts_raw_probability(tmp_path):
+    # Клиника без калибровки центра (PERSONA): Laya пуста, laya_raw — нет; покрытие не нулевое.
+    pred = _predictions()
+    joined = laya_runner.join_laya(pred, laya_runner.run_laya(_cfg(tmp_path, centre=None), pred,
+                                                              tmp_path / "private"))
+    cov = laya_runner.coverage(joined)
+    assert cov["scored"] == 1 and cov["scored_centre_calibrated"] == 0
 
 
 def test_laya_input_has_no_identifiers(tmp_path):

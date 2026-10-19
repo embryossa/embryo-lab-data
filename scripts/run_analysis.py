@@ -29,11 +29,12 @@ from embryo import (analytics, clinical, consult, contracts, dnn_runner, dt_api,
                     reconcile, regression_qc, report, tabpfn_regression_runner,
                     tabpfn_runner)  # noqa: E402
 from embryo import _io  # noqa: E402
-from embryo.clinics import fertimed, fertimed_pgt, ggrc, skyfert  # noqa: E402
+from embryo.clinics import fertimed, fertimed_pgt, ggrc, persona, skyfert  # noqa: E402
 
 # Клиники с собственным ingest/normalize-адаптером (см. src/embryo/clinics/).
 # Без --clinic (клиника A) поведение не меняется ни на йоту.
-_CLINIC_NORMALIZERS = {"fertimed": fertimed.prepare, "skyfert": skyfert.prepare, "ggrc": ggrc.prepare}
+_CLINIC_NORMALIZERS = {"fertimed": fertimed.prepare, "skyfert": skyfert.prepare, "ggrc": ggrc.prepare,
+                       "persona": persona.prepare}
 # Клиники со своим ПГТ-А парсером (другой вендор/формат PDF, см.
 # src/embryo/clinics/fertimed_pgt.py). GGRC — не PDF, а колонки, уже встроенные
 # в её выгрузку (ggrc.analyze_reports читает их напрямую, см. docs/GGRC.md).
@@ -52,7 +53,9 @@ _CLINIC_WIDE_LOADERS = {"ggrc": ggrc.prepare_wide}
 # "широкая" популяция совпадала с отчётной когортой (34 строки из 105), и
 # лабораторные KPI считались по переносам размороженных эмбрионов вместо
 # свежих циклов. Тот же контракт возврата, что и у _CLINIC_WIDE_LOADERS.
-_CLINIC_WIDE_FROM_SOURCE = {"fertimed": fertimed.prepare_wide}
+# PERSONA: вход — staged-файл scripts/persona_stage.py; широкая популяция — строка на
+# блок метода программы (кЭКО / И / DO), см. persona.prepare_wide.
+_CLINIC_WIDE_FROM_SOURCE = {"fertimed": fertimed.prepare_wide, "persona": persona.prepare_wide}
 # Клиники, чья широкая lab-популяция несёт дополнительные "сырые" колонки,
 # нужные клиничному ПГТ-модулю выше (embedded PGT-A counts для GGRC — см.
 # ggrc.PGT_RAW_COLUMNS/ggrc.analyze_reports).
@@ -170,6 +173,11 @@ def _add_opu_aliases(frame: pd.DataFrame, clinic: str | None = None) -> pd.DataF
         if clinic == "fertimed" and "date_et" in out.columns:
             et_part = pd.to_datetime(out["date_et"], errors="coerce").dt.strftime("%Y%m%d")
             key = key + "#" + et_part.fillna("NA")
+        # PERSONA: смешанный цикл ЭКО/ИКСИ в широкой lab-популяции — две строки
+        # (блоки кЭКО и И) одной пункции; без суффикса блока _dedupe_cycle_keys
+        # оставил бы только одну из них (см. persona.prepare_wide).
+        if clinic == "persona" and "lab_part" in out.columns:
+            key = key + "#" + out["lab_part"].astype("string").fillna("NA")
         out["_key"] = key
     elif "ID" in out.columns:
         out["_key"] = out["ID"]
@@ -620,6 +628,29 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _persona_year_run(cfg: dict, year: str | None, explicit_input: str | None) -> str:
+    """PERSONA: прогон по году (docs/PERSONA.md). Выходы — в data/processed/persona/<год>/,
+    чтобы годы не перезаписывали друг друга; вход по умолчанию — staged-файл года.
+    Секрет cycle_uid и staged/demo-папки общие для всех лет: cycle_uid одной пункции
+    одинаков в любом годовом прогоне и в демо-экспорте."""
+    if not year or not str(year).isdigit():
+        raise SystemExit(f"PERSONA: укажите год прогона числом: --persona <YEAR> (получено {year!r})")
+    root = str(cfg["paths"]["processed_dir"]).rstrip("/")
+    tagged = f"{root}/{year}"
+
+    def _retag(value: str) -> str:
+        return tagged + value[len(root):] if value.startswith(root + "/") else value
+
+    for key in ("processed_dir", "agent_packets_dir", "local_private_dir"):
+        cfg["paths"][key] = tagged if cfg["paths"][key].rstrip("/") == root else _retag(cfg["paths"][key])
+    cfg["privacy"]["crosswalk_file"] = _retag(cfg["privacy"]["crosswalk_file"])
+    for tool in (cfg.get("external_tools") or {}).values():
+        if isinstance(tool, dict) and isinstance(tool.get("output"), str):
+            tool["output"] = _retag(tool["output"])
+    print(f"[persona] год {year}: выходы -> {tagged}")
+    return explicit_input or f"{cfg['paths']['staged_dir']}/persona_{year}.xlsx"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="End-to-end embryo laboratory analysis")
     parser.add_argument("input", nargs="?")
@@ -637,6 +668,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="ярлык для --clinic fertimed")
     parser.add_argument("--ggrc", action="store_true",
                         help="ярлык для --clinic ggrc")
+    parser.add_argument("--persona", metavar="YEAR",
+                        help="ярлык для --clinic persona: вход — staged-файл persona_<YEAR>.xlsx "
+                             "(scripts/persona_stage.py), выходы — data/processed/persona/<YEAR>/")
     parser.add_argument("--dt-check", action="store_true",
                         help="сухая проверка входа Digital Twin 7.1: служба проверяет пакеты без "
                              "расчёта; TabPFN/DNN/отчёты не запускаются, data/processed не меняется")
@@ -645,10 +679,14 @@ def main(argv: list[str] | None = None) -> int:
         args.clinic = "fertimed"
     if args.ggrc and not args.clinic:
         args.clinic = "ggrc"
+    if args.persona and not args.clinic:
+        args.clinic = "persona"
 
     os.chdir(ROOT)
     config_dir = ROOT / "config" if not args.clinic else ROOT / "config" / "clinics" / args.clinic
     cfg = _settings(config_dir)
+    if args.clinic == "persona":
+        args.input = _persona_year_run(cfg, args.persona, args.input)
     print(f"[digital-twin] {describe_dt_source(cfg)}")
     check_dir = None
     if args.dt_check:

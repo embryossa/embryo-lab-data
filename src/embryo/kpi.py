@@ -372,6 +372,12 @@ def competency_exclusion_mask(df: pd.DataFrame, columns_cfg: dict) -> pd.Series:
         pd.NA, index=df.index, dtype="string")
     no_retrieval = _token_match(method, cfg.get("no_retrieval_tokens", []))
     freeze_all = _token_match(method, cfg.get("freeze_all_tokens", []))
+    # Клиника без токена freeze-all в методе (PERSONA: метод берётся из блока
+    # воронки) передаёт готовый булев флаг программы.
+    flag_col = cfg.get("freeze_all_flag_column")
+    if flag_col and flag_col in df.columns:
+        freeze_all = freeze_all | df[flag_col].map(
+            lambda v: str(v).strip().lower() in ("true", "1", "1.0")).astype(bool)
     return (open_cycle | no_retrieval | freeze_all).fillna(False)
 
 

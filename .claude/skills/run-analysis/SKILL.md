@@ -27,6 +27,13 @@ replay.
 подготовка входа для этой клиники ничем не отличается для пользователя skill'а
 (шаги ниже те же).
 
+`/run-persona <год>` (или `/run-analysis --persona <год>`) — PERSONA
+(`config/clinics/persona/`, `--clinic persona` под капотом, см. `docs/PERSONA.md`).
+Вход — staged-файл года после `scripts/persona_stage.py`, выходы — в
+`data/processed/persona/<год>/` (годы не перезаписывают друг друга); `$ARGUMENTS`
+для preflight/dt-check — `--persona <год>`. Без MIRI/лотов/ПГТ-А; Laya без
+калибровки центра (`laya_status=ok_uncalibrated`). Пошагово — `.claude/commands/run-persona.md`.
+
 IVF Digital Twin для всех клиник и всех команд — только 7.1 через REST API службы
 `IVFClinicIntegration71` (подключение «Аналитика», `src/embryo/dt_api.py`); батч 7.0
 (`RUN_BATCH.bat`) снят 2026-09-13, флага версии нет. Политика пакета — блок

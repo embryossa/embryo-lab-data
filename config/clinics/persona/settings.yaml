@@ -1,0 +1,119 @@
+# config/clinics/persona/settings.yaml — параметры прогона для клиники PERSONA.
+# Независимый файл (структура как у config/clinics/skyfert/settings.yaml).
+# Машинные пути к внешним инструментам — в config/machine.local.yaml.
+# Обоснование — docs/PERSONA.md.
+
+paths:
+  inbox_dir: "data/inbox/PERSONA"            # сырые годовые выгрузки (читает только scripts/persona_stage.py)
+  staged_dir: "data/processed/persona/local_private/staged"   # вход run_analysis: persona_<год>.xlsx
+  demo_export_dir: "data/processed/persona/demo_export"       # обезличенный вход ivf-lab-kpi-ews-demo
+  processed_dir: "data/processed/persona"
+  agent_packets_dir: "data/processed/persona/agent_packets"
+  local_private_dir: "data/processed/persona/local_private"
+  opu_table: "data/inbox/PERSONA/OPU_table_master.xlsx"  # не существует -> откат на входной staged-файл
+
+persona:
+  # AFC в выгрузке PERSONA нет. Решение владельца 2026-10-19: для прогноза DT
+  # принять AFC = ОКК x коэффициент, подобранный на Fertimed. Коэффициент —
+  # ΣКАФ/ΣОКК по 226 уникальным пункциям Fertimed 2025-01..2026-09
+  # (2025_full_year.xlsx + 1-9-2026.xlsx, КАФ 1..60, ОКК>0), где КАФ не скопирован
+  # из ОКК или числа фолликулов (такие копии — ~29% строк). Все 412 пункций: 1.18;
+  # по возрасту <35 / 35-39 / >=40: 1.21 / 1.06 / 1.18. ОКК — собственные ооциты
+  # пункции (кЭКО + И + ЗО); у цикла только на донорских ооцитах — ОКК донора (DO),
+  # флаг afc_from_donor_occ (решение владельца 2026-10-19).
+  afc_per_occ: 1.16
+  # ИМТ вне диапазона — ошибка ввода (в выгрузке есть 0, 163, 442) -> пропуск.
+  bmi_plausible: [12, 70]
+
+external_tools:
+  laya:
+    enabled: true
+    # Калибровки центра PERSONA в Laya нет (calibration.json знает только 4 центра RBMO;
+    # неизвестное имя -> ValueError). Пусто = сырая вероятность laya_raw, только для
+    # ранжирования; run_manifest: laya_status=ok_uncalibrated. Средний прогноз Laya на
+    # PERSONA выше наблюдаемой частоты на 15-16 п.п. (data/processed/persona/laya/).
+    centre: ""
+    restore: true
+  digital_twin:
+    api:
+      url: "https://127.0.0.1:8843/api/v1"
+      n_sim: 2000
+      poll_seconds: 15
+      timeout_minutes: 720
+      keep_batches: false
+      timepoints: [transfer, retrieval]
+      fallback_to_retrieval: true
+      # TESA — тестикулярная аспирация; DT не различает OA/NOA, флаг
+      # sperm_source_inferred остаётся (токен не однозначный).
+      sperm_source_map: {tesa: "testicular_OA"}
+      impute:
+        afc_columns: [afc_from_occ]           # оценка AFC = ОКК x persona.afc_per_occ (флаг afc_source)
+        afc_from_follicles: false             # колонки фолликулов нет
+        afc_constant: null                    # без ОКК (своих или донорских) AFC не подставляется
+        attempt: 1
+        okk_for_thawed_oocytes: true
+  tabpfn:
+    launch: true
+    mode: batch
+    project_dir: ""
+    run_cmd: 'run_tabpfn_batch.bat --input {input} --output {output} --run-id {run_id}'
+    results_dir: ""
+    predictions_glob: "tabpfn_predictions*.csv"
+    output: "data/processed/persona/local_private/tabpfn_predictions.csv"
+  dnn_verifier:
+    enabled: true
+    project_dir: ""
+    model_path: ""
+    run_cmd: ""
+    output: "data/processed/persona/evo_predictions.csv"
+    scaler_path: ""
+  tabpfn_regression:
+    enabled: true
+    project_dir: ""
+    run_cmd: ""
+    output: "data/processed/persona/local_private/tabpfn_regression_full.csv"
+
+thresholds:
+  tabpfn_ci_width_pp: 20
+  cultivation_window_days: 6
+
+privacy:
+  secret_file: "data/processed/persona/local_private/cycle_uid.key"
+  crosswalk_file: "data/processed/persona/local_private/cycle_uid_crosswalk.csv"
+
+# Формула клиники A как отправная точка (как у Skyfert). У PERSONA нет ни AFC, ни
+# фолликулов, поэтому член a_afc при импутации АМГ равен нулю (normalize.impute_amh
+# берёт afc -> follicles -> 0). АМГ пропущен у ~6-16% программ.
+amh_impute:
+  a_afc: 0.16
+  b_occ: 0.05
+  c_age: 0.08
+  intercept: 0.5
+  floor: 0.1
+  ceil: 12.0
+
+bmi_impute:
+  constant: 24.0
+
+join:
+  dt_key: "_key"
+  opu_key: "patient_id"
+  tabpfn_key: "patient_id"
+
+miri_logs:
+  enabled: false   # в выгрузке есть только флаг "Miri 6/12", логов инкубатора нет
+
+consumable_lots:
+  enabled: false
+  airtable:
+    base_id: ""
+    items_table_id: ""
+    changes_table_id: ""
+    token: ""
+
+pgt:
+  enabled: false   # пол/номер эмбриона ПГТ есть, отчётов ПГТ-А нет
+
+analytics:
+  datalore_notebook_reference: "notebooks/reference/Data_Twin_analytics.ipynb"
+  primary_prob_col: ["DIGITAL TWIN", "p_per_transfer"]
