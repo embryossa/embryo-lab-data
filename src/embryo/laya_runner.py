@@ -76,10 +76,18 @@ def join_laya(predictions: pd.DataFrame, laya: pd.DataFrame | None) -> pd.DataFr
 
 
 def coverage(predictions: pd.DataFrame) -> dict:
+    """Покрытие Laya. ``scored`` — циклы с сырой вероятностью (``laya_raw``): у клиники
+    без калибровки центра (PERSONA) калиброванная колонка ``Laya`` пуста по построению,
+    и счёт по ней выдавал бы нулевое покрытие работающего компонента.
+    ``scored_centre_calibrated`` — циклы с калиброванной вероятностью."""
+    def _count(col: str) -> int:
+        if col not in predictions.columns:
+            return 0
+        return int(pd.to_numeric(predictions[col], errors="coerce").notna().sum())
+
     ok = predictions.get("laya_assessable")
-    scored = int(pd.to_numeric(predictions.get("Laya"), errors="coerce").notna().sum()) \
-        if "Laya" in predictions.columns else 0
-    return {"scored": scored, "cohort": int(len(predictions)),
+    return {"scored": _count("laya_raw"), "scored_centre_calibrated": _count("Laya"),
+            "cohort": int(len(predictions)),
             "not_assessable": int((ok == False).sum()) if ok is not None else None,  # noqa: E712
             "disagreement_high": int((predictions.get("laya_disagreement_high") == True).sum())  # noqa: E712
             if "laya_disagreement_high" in predictions.columns else 0}

@@ -69,10 +69,21 @@
 
 ## Запуск
 
+Команда Claude Code: `/run-persona <год>` (`.claude/commands/run-persona.md`).
+
 ```
-python scripts/persona_stage.py                     # staged + демо-экспорт по годам
-python scripts/run_analysis.py data/processed/persona/local_private/staged/persona_2024.xlsx --clinic persona --dt-check
+python scripts/persona_stage.py                         # staged + демо-экспорт + циклы для Laya
+python scripts/preflight.py --persona 2024
+python scripts/run_analysis.py --persona 2024 --dt-check   # сухая проверка DT
+python scripts/run_analysis.py --persona 2024              # полный прогон -> data/processed/persona/2024/
 ```
+
+`--persona <год>` = `--clinic persona` + вход `staged/persona_<год>.xlsx` + выходы
+(processed, local_private, agent_packets, crosswalk, выходы TabPFN/DNN/регрессии) в
+`data/processed/persona/<год>/`. Секрет `cycle_uid` общий для всех лет и демо-экспорта.
+Laya в пайплайне — без калибровки центра (`centre: ""`, статус `ok_uncalibrated`,
+покрытие по `laya_raw`); restore Laya ставит фолликулы = ОКК, в отличие от демо-анализа
+(`--impute-dt71`, `rint(ОКК/0.846)`).
 
 Демо-дашборд: `ivf-lab-kpi-ews-demo`, `--input <demo_export/persona_<год>.csv> --name persona_<год>`.
 Laya (уровень цикла, решение владельца): `scripts/ews_laya.py --name persona_<год>_cycles
@@ -83,5 +94,3 @@ Laya (уровень цикла, решение владельца): `scripts/ew
 
 - Криопереносы (~1000 в год) не несут воронку; связь с пункцией — по `patient_id`
   (база пациентов и карточки) — следующий шаг.
-- `run_analysis` пишет в один `data/processed/persona/` — прогоны по годам перезапишут
-  друг друга, пока не появится тег прогона.

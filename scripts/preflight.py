@@ -14,7 +14,7 @@
   3. пути к внешним инструментам (DT/TabPFN/DNN/TabPFN-3) из machine.local.yaml
      и настроек клиники — с учётом гейтов enabled/launch.
 
-Запуск:  python scripts/preflight.py [--clinic fertimed]
+Запуск:  python scripts/preflight.py [--clinic fertimed | --persona <YEAR>]
 Код возврата: 0 — можно запускать прогон; 1 — есть блокирующие проблемы.
 """
 from __future__ import annotations
@@ -168,10 +168,12 @@ def main() -> int:
     parser.add_argument("--clinic", help="config/clinics/<name> (fertimed, ggrc, skyfert)")
     parser.add_argument("--fertimed", action="store_true", help="ярлык для --clinic fertimed")
     parser.add_argument("--ggrc", action="store_true", help="ярлык для --clinic ggrc")
+    parser.add_argument("--persona", metavar="YEAR", help="ярлык для --clinic persona (год не проверяется)")
     parser.add_argument("--skip-tools", action="store_true",
                         help="не проверять пути внешних инструментов")
     args = parser.parse_args()
-    clinic = args.clinic or ("fertimed" if args.fertimed else "ggrc" if args.ggrc else None)
+    clinic = args.clinic or ("fertimed" if args.fertimed else "ggrc" if args.ggrc
+                             else "persona" if args.persona else None)
 
     print(f"[preflight] python  : {sys.executable}")
     print(f"[preflight] клиника : {clinic or 'A (по умолчанию)'}")

@@ -189,3 +189,21 @@ def test_laya_export_is_cycle_level_with_outcome_and_no_phi(staged):
     assert list(laya["Preg"]) == [1.0, 0.0]
     assert list(laya["Oocyte source"]) == ["Own", "Own+Donor"]
     assert "Тестова" not in laya.to_csv(index=False)
+
+
+def test_persona_year_run_tags_outputs_but_keeps_secret_and_inputs():
+    import yaml
+    from run_analysis import _persona_year_run
+    cfg = yaml.safe_load((ROOT / "config/clinics/persona/settings.yaml").read_text(encoding="utf-8"))
+    secret = cfg["privacy"]["secret_file"]
+    path = _persona_year_run(cfg, "2024", None)
+    assert path == "data/processed/persona/local_private/staged/persona_2024.xlsx"
+    assert cfg["paths"]["processed_dir"] == "data/processed/persona/2024"
+    assert cfg["paths"]["local_private_dir"] == "data/processed/persona/2024/local_private"
+    assert cfg["paths"]["agent_packets_dir"] == "data/processed/persona/2024/agent_packets"
+    assert cfg["privacy"]["crosswalk_file"].startswith("data/processed/persona/2024/")
+    assert cfg["external_tools"]["tabpfn"]["output"].startswith("data/processed/persona/2024/")
+    assert cfg["privacy"]["secret_file"] == secret                      # cycle_uid общий для всех лет
+    assert cfg["paths"]["staged_dir"] == "data/processed/persona/local_private/staged"
+    with pytest.raises(SystemExit):
+        _persona_year_run(cfg, None, None)

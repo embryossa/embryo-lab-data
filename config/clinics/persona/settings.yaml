@@ -28,7 +28,11 @@ persona:
 external_tools:
   laya:
     enabled: true
-    centre: "PERSONA"                         # новый центр: калибровки по центру пока нет
+    # Калибровки центра PERSONA в Laya нет (calibration.json знает только 4 центра RBMO;
+    # неизвестное имя -> ValueError). Пусто = сырая вероятность laya_raw, только для
+    # ранжирования; run_manifest: laya_status=ok_uncalibrated. Средний прогноз Laya на
+    # PERSONA выше наблюдаемой частоты на 15-16 п.п. (data/processed/persona/laya/).
+    centre: ""
     restore: true
   digital_twin:
     api:

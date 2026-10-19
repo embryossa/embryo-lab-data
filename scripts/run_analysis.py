@@ -628,6 +628,29 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _persona_year_run(cfg: dict, year: str | None, explicit_input: str | None) -> str:
+    """PERSONA: прогон по году (docs/PERSONA.md). Выходы — в data/processed/persona/<год>/,
+    чтобы годы не перезаписывали друг друга; вход по умолчанию — staged-файл года.
+    Секрет cycle_uid и staged/demo-папки общие для всех лет: cycle_uid одной пункции
+    одинаков в любом годовом прогоне и в демо-экспорте."""
+    if not year or not str(year).isdigit():
+        raise SystemExit(f"PERSONA: укажите год прогона числом: --persona <YEAR> (получено {year!r})")
+    root = str(cfg["paths"]["processed_dir"]).rstrip("/")
+    tagged = f"{root}/{year}"
+
+    def _retag(value: str) -> str:
+        return tagged + value[len(root):] if value.startswith(root + "/") else value
+
+    for key in ("processed_dir", "agent_packets_dir", "local_private_dir"):
+        cfg["paths"][key] = tagged if cfg["paths"][key].rstrip("/") == root else _retag(cfg["paths"][key])
+    cfg["privacy"]["crosswalk_file"] = _retag(cfg["privacy"]["crosswalk_file"])
+    for tool in (cfg.get("external_tools") or {}).values():
+        if isinstance(tool, dict) and isinstance(tool.get("output"), str):
+            tool["output"] = _retag(tool["output"])
+    print(f"[persona] год {year}: выходы -> {tagged}")
+    return explicit_input or f"{cfg['paths']['staged_dir']}/persona_{year}.xlsx"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="End-to-end embryo laboratory analysis")
     parser.add_argument("input", nargs="?")
@@ -645,6 +668,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="ярлык для --clinic fertimed")
     parser.add_argument("--ggrc", action="store_true",
                         help="ярлык для --clinic ggrc")
+    parser.add_argument("--persona", metavar="YEAR",
+                        help="ярлык для --clinic persona: вход — staged-файл persona_<YEAR>.xlsx "
+                             "(scripts/persona_stage.py), выходы — data/processed/persona/<YEAR>/")
     parser.add_argument("--dt-check", action="store_true",
                         help="сухая проверка входа Digital Twin 7.1: служба проверяет пакеты без "
                              "расчёта; TabPFN/DNN/отчёты не запускаются, data/processed не меняется")
@@ -653,10 +679,14 @@ def main(argv: list[str] | None = None) -> int:
         args.clinic = "fertimed"
     if args.ggrc and not args.clinic:
         args.clinic = "ggrc"
+    if args.persona and not args.clinic:
+        args.clinic = "persona"
 
     os.chdir(ROOT)
     config_dir = ROOT / "config" if not args.clinic else ROOT / "config" / "clinics" / args.clinic
     cfg = _settings(config_dir)
+    if args.clinic == "persona":
+        args.input = _persona_year_run(cfg, args.persona, args.input)
     print(f"[digital-twin] {describe_dt_source(cfg)}")
     check_dir = None
     if args.dt_check:
