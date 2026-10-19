@@ -119,12 +119,14 @@ canonical:
 
 # Исключения таблиц компетентности (kpi.competency_exclusion_mask). У PERSONA
 # метод берётся из блока (IVF/ICSI), токенов no-retrieval/freeze-all в нём нет.
-# Freeze-all исключается по флагу программы (решение владельца 2026-10-19):
-# ОП/ЕТ = ОП и заморожен >= 1 эмбрион (persona.stage_export). Программы без
-# ооцитов (2PN нет) уходят из таблиц эмбриологов общим фильтром 2PN.
+# Freeze-all НЕ исключается (решение владельца 2026-10-19, вторая редакция): таблицы
+# компетентности строятся на всей лабораторной работе — FR/BlR/TGBDR не зависят от
+# того, был ли свежий перенос, а freeze-all у PERSONA ~45% строк. Флаг freeze_all в
+# staged остаётся как контекст программы; включить исключение можно строкой
+# freeze_all_flag_column: "freeze_all". Программы без ооцитов (2PN нет) уходят из
+# таблиц эмбриологов общим фильтром 2PN.
 competency_exclusion:
   no_retrieval_tokens: []
   freeze_all_tokens: []
-  freeze_all_flag_column: "freeze_all"
   surgical_sperm_tokens: ["TESA"]
   embryologist_only_treatment_tokens: []

@@ -151,13 +151,17 @@ def test_registered_in_run_analysis():
     assert _CLINIC_WIDE_FROM_SOURCE["persona"] is persona.prepare_wide
 
 
-def test_freeze_all_flag_leaves_only_competency_tables(staged):
+def test_freeze_all_stays_in_competency_tables_unless_flag_configured(staged):
     from embryo import kpi
     s = staged.copy()
     s.loc[1, "freeze_all"] = True                     # вторая программа: ОП, эмбрионы заморожены
     wide, _ = persona.prepare_wide(s, COLUMNS_CFG, SETTINGS_CFG)
-    mask = kpi.competency_exclusion_mask(wide, COLUMNS_CFG)
-    assert list(mask) == [False, False, True, True]  # обе строки-блока второй программы
+    # PERSONA: таблицы компетентности — на всей лабораторной работе (решение владельца).
+    assert not kpi.competency_exclusion_mask(wide, COLUMNS_CFG).any()
+    # Общая настройка kpi: флаг-колонка исключает обе строки-блока программы.
+    cfg = {"competency_exclusion": {**COLUMNS_CFG["competency_exclusion"],
+                                    "freeze_all_flag_column": "freeze_all"}}
+    assert list(kpi.competency_exclusion_mask(wide, cfg)) == [False, False, True, True]
 
 
 def test_stage_sets_freeze_all_from_cancel_and_frozen(workbook):
