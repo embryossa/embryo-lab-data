@@ -1,4 +1,4 @@
-"""persona_metrics_report.py — сводка метрик прогонов PERSONA 2023–2025 для статьи (markdown).
+"""persona_metrics_report.py — сводка метрик прогонов PERSONA по всем годам с прогоном (markdown для статьи).
 
 Только агрегаты: run_manifest.json, agent_packets/analysis_bundle.json (KPI) и
 dt_predictions.csv (вероятности моделей + исход). Все числа считает этот скрипт.
@@ -14,6 +14,7 @@ Laya с калибровкой центра оценивается вне выб
 from __future__ import annotations
 
 import json
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -23,9 +24,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, roc_auc_score
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+from embryo.clinics.persona import run_years  # noqa: E402
+
 BASE = ROOT / "data" / "processed" / "persona"
-YEARS = ("2023", "2024", "2025")
-POOLED = "2023–2025"
+YEARS = tuple(run_years(BASE))
+POOLED = f"{YEARS[0]}–{YEARS[-1]}" if YEARS else "—"
 EPS = 1e-6
 N_BOOT = 2000
 MODELS = {  # подпись -> колонка dt_predictions
@@ -223,7 +227,7 @@ def main() -> None:
     ciw = pd.concat([pd.to_numeric(pd.read_csv(BASE / y / "dt_predictions.csv", low_memory=False)["ci_width_pp"],
                                    errors="coerce") for y in YEARS])
     ci_small, ci_n, ci_max = int(ciw.lt(0.1).sum()), int(ciw.notna().sum()), float(ciw.max())
-    lines = [f"# PERSONA 2023–2025: run metrics and model discrimination", "",
+    lines = [f"# PERSONA {POOLED}: run metrics and model discrimination", "",
              f"_Generated {date.today().isoformat()} by `embryo-lab-data/scripts/persona_metrics_report.py` "
              "from run outputs (aggregates only; no identifiers)._", "",
              "Outcome: clinical pregnancy confirmed by ultrasound (including ectopic), per fresh transfer; "
@@ -245,16 +249,25 @@ def main() -> None:
               "is evaluated out of sample (leave-one-year-out shift).", ""]
     lines += calibration(d)
     lines += laya_centre_section()
+    dnn_imp = {}
+    for y in YEARS:
+        cov = json.loads((BASE / y / "run_manifest.json").read_text(encoding="utf-8")).get("dnn_coverage") or {}
+        dnn_imp[y] = cov.get("model_imputed") or {}
+    bl_from_p50 = sum(int(v.get("bl", 0)) for v in dnn_imp.values())
     lines += ["## 6. Inputs imputed for PERSONA (owner-approved)", "",
               "- DT 7.1: AFC = OCC × 1.16 (no AFC in the export; for donor-oocyte cycles the donor OCC); "
               "missing AMH/BMI by the pipeline formulas; missing attempt number = 1; sperm source inferred.",
               "- DNN (EVO): follicles = rint(OCC / 0.846) for all cycles (no follicle counts); inseminated = MII "
-              "for donor-oocyte cycles; one missing blastocyst count (2023) from the TabPFN-3 P50. "
-              "OCC/follicles is therefore ≈0.846 for every cycle and carries no information.",
+              f"for donor-oocyte cycles; missing blastocyst count from the TabPFN-3 P50 in {bl_from_p50} cycle(s). "
+              "OCC/follicles is therefore ≈0.846 for every cycle and carries no information. Per year: "
+              + "; ".join(f"{y} {v}" for y, v in dnn_imp.items()) + ".",
               "- Laya: the same follicle/inseminated rule (`--impute-dt71`), attempt = 1 if missing.",
-              f"- TabPFN 95% CI width (`ci_width_pp`) is below 0.1 pp in {ci_small} of {ci_n} cohort cycles "
-              f"(max {ci_max:.2f} pp); the cause is not established.", ""]
-    out = BASE / "PERSONA_metrics_2023_2025.md"
+              f"- TabPFN stage range (`ci_width_pp`; historically labelled a 95% CI) is below 0.1 pp in {ci_small} of "
+              f"{ci_n} cohort cycles (max {ci_max:.2f} pp): it is the spread over Monte-Carlo rows of UNKNOWN funnel "
+              "stages and is exactly zero when every stage is known — not a model confidence interval. Model "
+              "uncertainty (spread across TabPFN ensemble members, `tabpfn_ens_*`) is recorded from the "
+              "2026-10-20 adapter onward.", ""]
+    out = BASE / f"PERSONA_metrics_{YEARS[0]}_{YEARS[-1]}.md"
     out.write_text("\n".join(lines), encoding="utf-8")
     print(f"[metrics] -> {out}")
 

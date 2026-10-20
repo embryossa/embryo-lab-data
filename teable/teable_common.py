@@ -35,6 +35,19 @@ OFF_COHORT_SUBDIR = "off_cohort"
 # Config / clinic registry
 # ---------------------------------------------------------------------------
 
+def _year_dirs(root: str | None) -> list[str]:
+    """Папки <root>/<ГГГГ> с завершённым прогоном (run_manifest.json + dt_predictions.csv), по возрастанию."""
+    if not root:
+        return []
+    base = root if os.path.isabs(root) else os.path.join(REPO_ROOT, root)
+    if not os.path.isdir(base):
+        return []
+    return [os.path.join(base, n) for n in sorted(os.listdir(base))
+            if len(n) == 4 and n.isdigit()
+            and os.path.isfile(os.path.join(base, n, "run_manifest.json"))
+            and os.path.isfile(os.path.join(base, n, "dt_predictions.csv"))]
+
+
 class Clinic:
     """One clinic = one Teable base + one processed folder + one card page."""
 
@@ -46,12 +59,19 @@ class Clinic:
         self.dt_version = raw.get("dt_version", cfg.get("dt_version", "v7.0"))
         self.upload_files = raw.get("upload_files", cfg.get("upload_files", True))
         processed = raw.get("processed_dir") or ""
+        # Клиника с годовыми прогонами (PERSONA: <year_root>/<год>/): последний год —
+        # основной прогон, остальные — дополнительные; новый год подхватывается сам.
+        years = _year_dirs(raw.get("year_root"))
+        if years:
+            processed = years[-1]
         self.processed_dir = (processed if os.path.isabs(processed)
                               else os.path.join(REPO_ROOT, processed))
         # Supplemental runs over cycles outside the report cohort (scripts/
         # run_off_cohort.py writes <processed_dir>/off_cohort). Synced into the
         # same base as their own runs; their cards are fresh, not archived.
         extra = raw.get("supplemental_dirs")
+        if years:
+            extra = list(reversed(years[:-1]))
         if extra is None:
             extra = [OFF_COHORT_SUBDIR] if os.path.isdir(
                 os.path.join(self.processed_dir, OFF_COHORT_SUBDIR)) else []

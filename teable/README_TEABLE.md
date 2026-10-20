@@ -22,6 +22,12 @@ Teable   http://127.0.0.1:3000     базы, таблицы, срезы, фил�
 | `ggrc` | GGRC | `data/processed/ggrc` |
 | `skyfert` | Skyfert | `data/processed/skyfert` |
 
+Клиника с годовыми прогонами (PERSONA, `data/processed/persona/<год>/`) задаётся ключом
+`year_root` вместо `processed_dir`/`supplemental_dirs`: последний год с `run_manifest.json`
+становится основным прогоном, остальные — дополнительными, новый год подхватывается сам.
+Ключи `fet_links` / `fet_links_private` подключают таблицу криопереносов (PERSONA:
+`scripts/persona_fet_link.py`).
+
 Новая клиника = одна запись в `clinics` с пустым `base_id` + `python teable_bootstrap.py
 --all`: база создастся, а её id впишется в конфиг сам. Никаких id в bat-файлах и в
 команде `/teable-sync` больше нет.

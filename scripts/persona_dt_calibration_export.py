@@ -1,4 +1,4 @@
-"""persona_dt_calibration_export.py — объединённый файл калибровки DT 7.1 для PERSONA (2023–2025).
+"""persona_dt_calibration_export.py — объединённый файл калибровки DT 7.1 для PERSONA (все годы с прогоном).
 
 Формат — шаблон «Калибровка переносов» программы IVF Digital Twin 7.1
 (desktop/clinic_intake.TRANSFER_COLUMNS): программа клиники сама считает по нему прогнозы
@@ -27,9 +27,10 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from embryo import privacy  # noqa: E402
+from embryo.clinics.persona import run_years  # noqa: E402
 
 BASE = ROOT / "data" / "processed" / "persona"
-YEARS = ("2023", "2024", "2025")
+YEARS = tuple(run_years(BASE))
 SECRET = BASE / "local_private" / "cycle_uid.key"
 COLUMNS = ['patient_id', 'cycle_id', 'transfer_id', 'transfer_month', 'oocyte_source', 'transfer_kind',
            'embryo_stage', 'embryos_transferred', 'pgt_a', 'age', 'amh', 'afc', 'bmi', 'attempt',
@@ -114,7 +115,7 @@ def main() -> int:
     notes["own_plus_donor_as_donor"] = int(df["_own_donor_mixed"].sum())
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    path = out / "PERSONA_DT71_calibration_transfers_2023_2025.csv"
+    path = out / f"PERSONA_DT71_calibration_transfers_{YEARS[0]}_{YEARS[-1]}.csv"
     df[COLUMNS].to_csv(path, index=False, encoding="utf-8-sig", lineterminator="\n")
     by_year = df.groupby("_year").agg(rows=("cycle_id", "size"),
                                       pregnancies=("outcome_clinical_pregnancy", lambda s: int(s.astype(int).sum())))

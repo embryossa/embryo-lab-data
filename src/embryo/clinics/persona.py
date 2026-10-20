@@ -264,7 +264,18 @@ def stage_exports(paths: list[str | Path], columns_cfg: dict, settings_cfg: dict
     "Дата Программы". Повторы внутри одного файла не трогаются — их снимает общий
     _dedupe_cycle_keys пайплайна (правило владельца: наиболее полная строка).
     """
-    frames = [stage_export(read_export(p, columns_cfg), columns_cfg, settings_cfg) for p in paths]
+    # Повторная выгрузка того же года (обновлённые исходы) рядом со старой книгой: берётся
+    # более свежая по дате изменения файла, старая пропускается целиком — иначе программы
+    # года задвоились бы (межфайловые дубли ниже снимаются только между книгами РАЗНЫХ лет).
+    by_year: dict[int, list[Path]] = {}
+    for p in map(Path, paths):
+        by_year.setdefault(find_data_sheet(p, columns_cfg)[1], []).append(p)
+    chosen, superseded = [], []
+    for year, books in sorted(by_year.items()):
+        books = sorted(books, key=lambda b: b.stat().st_mtime)
+        chosen.append(books[-1])
+        superseded += [f"{b.name} (лист {year}, заменена {books[-1].name})" for b in books[:-1]]
+    frames = [stage_export(read_export(p, columns_cfg), columns_cfg, settings_cfg) for p in chosen]
     staged = pd.concat(frames, ignore_index=True)
     key = (staged["patient_id"].fillna("NA") + "#"
            + staged["program_date"].dt.strftime("%Y%m%d").fillna("NA") + "#"
@@ -274,7 +285,8 @@ def stage_exports(paths: list[str | Path], columns_cfg: dict, settings_cfg: dict
     cross = order.groupby("_k")["sheet_year"].transform("nunique") > 1
     drop = order.index[cross & order.duplicated("_k", keep="first")]
     report = {"programs_read": int(len(staged)), "cross_file_duplicates_dropped": int(len(drop)),
-              "programs_without_date": int(staged["program_date"].isna().sum())}
+              "programs_without_date": int(staged["program_date"].isna().sum()),
+              "books_superseded": superseded}
     staged = staged.drop(index=drop).reset_index(drop=True)
     return staged, report
 
@@ -524,3 +536,13 @@ def link_fets(staged: pd.DataFrame, secret: bytes) -> pd.DataFrame:
                                           "more_than_tracked" if reported > tracked else "fewer_than_tracked")
             rows.append(row)
     return pd.DataFrame(rows, columns=FET_LINK_COLUMNS)
+
+
+def run_years(base_dir: str | Path) -> list[str]:
+    """Годы с завершённым прогоном PERSONA: папки <год>/ с run_manifest.json и dt_predictions.csv
+    (scripts/run_analysis.py --persona <год>). Сводные скрипты (метрики, калибровка, Teable)
+    берут годы отсюда, а не из списка в коде — новые выгрузки подхватываются сами."""
+    base = Path(base_dir)
+    return sorted(p.name for p in base.iterdir()
+                  if p.is_dir() and re.fullmatch(r"\d{4}", p.name)
+                  and (p / "run_manifest.json").is_file() and (p / "dt_predictions.csv").is_file())

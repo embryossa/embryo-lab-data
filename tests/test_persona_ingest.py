@@ -138,6 +138,21 @@ def test_cross_file_duplicate_keeps_own_year(tmp_path, workbook):
     assert len(staged) == 3 and set(staged["sheet_year"]) == {2024}
 
 
+def test_newer_book_of_the_same_year_supersedes_the_older(tmp_path, workbook):
+    # Повторная выгрузка 2024 (обновлённые исходы) рядом со старой: старая книга пропускается
+    # целиком, иначе программы года задвоились бы.
+    import os
+    import time
+    newer = tmp_path / "Нов. отчет 2024 (обновление).xlsx"
+    with pd.ExcelWriter(newer) as writer:
+        pd.DataFrame(_sheet_rows()).to_excel(writer, sheet_name="нов2024", header=False, index=False)
+    old_time = time.time() - 3600
+    os.utime(workbook, (old_time, old_time))
+    staged, report = persona.stage_exports([workbook, newer], COLUMNS_CFG, SETTINGS_CFG)
+    assert len(staged) == 3
+    assert len(report["books_superseded"]) == 1 and Path(workbook).name in report["books_superseded"][0]
+
+
 def test_demo_export_has_no_phi(staged):
     demo = persona.demo_export(staged, b"secret", COLUMNS_CFG)
     assert len(demo) == 4 and demo["Cycle ID"].is_unique
