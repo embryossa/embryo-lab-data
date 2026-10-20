@@ -57,6 +57,11 @@ class Clinic:
                 os.path.join(self.processed_dir, OFF_COHORT_SUBDIR)) else []
         self.supplemental_dirs = [d if os.path.isabs(d) else os.path.join(self.processed_dir, d)
                                   for d in extra]
+        # Криопереносы -> пункция (таблица FET): файл псевдонимов + локальный файл с
+        # ключом пункции/ФИО. Пусто — у клиники связи нет, таблица FET не заполняется.
+        rel = lambda v: (v if not v or os.path.isabs(v) else os.path.join(REPO_ROOT, v))  # noqa: E731
+        self.fet_links = rel(raw.get("fet_links") or "")
+        self.fet_links_private = rel(raw.get("fet_links_private") or "")
 
     @property
     def configured(self) -> bool:

@@ -49,6 +49,7 @@ CONTEXT_COLUMNS = {
     "et_or_cancel", "termination_reason", "hcg_result", "us2_result", "heartbeat_us3",
     "attempt_in_clinic", "miri", "time_lapse", "cook", "surrogate", "donor_sperm", "transferred_fet",
     "amh_imputed", "bmi_imputed", "freeze_all", "afc_from_donor_occ",
+    "thawed_fet", "embryos_remaining", "fet_count_clinic",
 }
 
 
@@ -229,6 +230,9 @@ def stage_export(raw: pd.DataFrame, columns_cfg: dict, settings_cfg: dict) -> pd
     out["date_et"] = pd.to_datetime(src.get("date_et"), errors="coerce")
     out["transfer_day"] = _num(src, "transfer_day")
     out["transferred_fet"] = _num(src, "transferred_fet")
+    out["thawed_fet"] = _num(src, "thawed_fet")
+    out["embryos_remaining"] = _num(src, "embryos_remaining")
+    out["fet_count_clinic"] = _num(src, "fet_count_clinic")
     out["Preg"] = _outcome(src)
 
     # Freeze-all: свежий перенос отменён (ОП) и заморожен хотя бы один эмбрион.
@@ -436,3 +440,87 @@ def demo_export(staged: pd.DataFrame, secret: bytes, columns_cfg: dict | None = 
     parts["date_opu"] = pd.to_datetime(parts["date_opu"], errors="coerce").dt.strftime("%Y-%m-%d")
     out = pd.DataFrame({demo: parts[src] for demo, src in DEMO_COLUMNS.items()})
     return out
+
+
+# --------------------------------------------------------------------------- 4. FET -> OPU
+
+FET_LINK_COLUMNS = [
+    "fet_uid", "opu_cycle_uid", "link_status", "candidates_n", "fet_date", "opu_date", "days_from_opu",
+    "transfer_day", "transferred_fet", "thawed_fet", "consumed", "consumed_from", "opu_frozen",
+    "opu_stock_before", "embryos_remaining", "tracked_remaining", "remaining_check", "surrogate", "Preg",
+]
+
+
+def link_fets(staged: pd.DataFrame, secret: bytes) -> pd.DataFrame:
+    """Криоперенос -> пункция-источник эмбрионов (решение владельца 2026-10-20).
+
+    Прямого ключа в выгрузке нет: у КРИО ПЕ не записана дата пункции, "Номер эмбриона" —
+    номер внутри заморозки. Связь — по пациентке (patient_id) и учёту эмбрионов:
+      * кандидаты — пункции той же пациентки ДО даты переноса с замороженными эмбрионами
+        (∑ кЭКО/И/DO; замороженные ооциты ЗО — не эмбрионы и не учитываются);
+      * остаток пункции = заморожено − разморожено в её предыдущих криопереносах
+        (разморожено = "FET Кол-во разморож.эмб-в", без него — перенесено: consumed_from);
+      * выбор — ближайшая предыдущая пункция с остатком > 0 (`nearest_with_stock`);
+        единственный кандидат — `single_opu`; остатков нет ни у одной — ближайшая
+        (`stock_exhausted`, сомнительно); кандидатов нет — `no_opu_in_data` (пункция до
+        2023 года, донорские эмбрионы, другой ключ пациентки) — перенос хранится без связи;
+      * сверка — "Остатки эмбрионов" после переноса против учтённого остатка всех пункций
+        пациентки (`remaining_check`: match / more_than_tracked — есть эмбрионы вне учтённых
+        пункций / fewer_than_tracked — разморожено или утилизировано вне учёта либо связь
+        неверна / unknown).
+    Идентификаторы: fet_uid = HMAC(пациентка#дата переноса#fet); opu_cycle_uid = cycle_uid
+    программы пункции (HMAC(пациентка#дата пункции)) — тот же, что в прогонах и Teable."""
+    s = _booleans(staged)
+    frozen = s[[f"{p}_frozen" for p in LAB_PARTS]].apply(pd.to_numeric, errors="coerce").sum(axis=1, min_count=1)
+    opu = s.loc[s["has_lab"] & frozen.gt(0)].assign(_frozen=frozen)
+    opu = opu.assign(_d=pd.to_datetime(opu["date_opu"], errors="coerce")).dropna(subset=["_d", "patient_id"])
+    fet = s.loc[s["treatment_type"].astype("string").str.contains("КРИО", na=False) & ~s["has_lab"]]
+    fet = fet.assign(_d=pd.to_datetime(fet["program_date"], errors="coerce").fillna(
+        pd.to_datetime(fet["date_et"], errors="coerce"))).dropna(subset=["_d", "patient_id"])
+    # Повтор строки КРИО ПЕ (та же пациентка и дата) — дубль выгрузки: правило владельца для
+    # повторяющихся ключей — оставить наиболее полную строку (иначе эмбрионы списались бы дважды).
+    fet = (fet.assign(_full=fet.notna().sum(axis=1)).sort_values("_full", ascending=False, kind="stable")
+           .drop_duplicates(["patient_id", "_d"]).drop(columns="_full"))
+
+    def uid(pid, d, suffix=""):
+        return privacy.make_cycle_uid(f"{str(pid).strip().upper()}#{d:%Y%m%d}{suffix}", secret)
+
+    rows = []
+    opu_by_patient = {k: g.sort_values("_d") for k, g in opu.groupby("patient_id")}
+    for pid, fets in fet.sort_values("_d").groupby("patient_id", sort=False):
+        pool = opu_by_patient.get(pid)
+        stock = {} if pool is None else {i: float(r["_frozen"]) for i, r in pool.iterrows()}
+        for _, f in fets.sort_values("_d").iterrows():
+            cands = [] if pool is None else [i for i, r in pool.iterrows() if r["_d"] < f["_d"]]
+            thawed = pd.to_numeric(f.get("thawed_fet"), errors="coerce")
+            moved = pd.to_numeric(f.get("transferred_fet"), errors="coerce")
+            consumed, source = ((thawed, "thawed") if pd.notna(thawed)
+                                else (moved, "transferred") if pd.notna(moved) else (np.nan, "unknown"))
+            row = {"fet_uid": uid(pid, f["_d"], "#fet"), "opu_cycle_uid": None, "candidates_n": len(cands),
+                   "fet_date": f["_d"].strftime("%Y-%m-%d"), "opu_date": None, "days_from_opu": None,
+                   "transfer_day": f.get("transfer_day"), "transferred_fet": moved, "thawed_fet": thawed,
+                   "consumed": consumed, "consumed_from": source, "opu_frozen": None, "opu_stock_before": None,
+                   "embryos_remaining": f.get("embryos_remaining"), "tracked_remaining": None,
+                   "remaining_check": "unknown", "surrogate": bool(f.get("surrogate")), "Preg": f.get("Preg")}
+            if not cands:
+                row["link_status"] = "no_opu_in_data"
+                rows.append(row)
+                continue
+            with_stock = [i for i in cands if stock[i] > 0]
+            chosen = (cands[-1] if len(cands) == 1 else with_stock[-1] if with_stock else cands[-1])
+            row["link_status"] = ("single_opu" if len(cands) == 1 else
+                                  "nearest_with_stock" if with_stock else "stock_exhausted")
+            o = pool.loc[chosen]
+            row.update(opu_cycle_uid=uid(pid, o["_d"]), opu_date=o["_d"].strftime("%Y-%m-%d"),
+                       days_from_opu=int((f["_d"] - o["_d"]).days), opu_frozen=float(o["_frozen"]),
+                       opu_stock_before=stock[chosen])
+            if pd.notna(consumed):
+                stock[chosen] = max(0.0, stock[chosen] - float(consumed))
+            tracked = sum(stock.values())
+            row["tracked_remaining"] = tracked
+            reported = pd.to_numeric(row["embryos_remaining"], errors="coerce")
+            if pd.notna(reported) and pd.notna(consumed):
+                row["remaining_check"] = ("match" if reported == tracked else
+                                          "more_than_tracked" if reported > tracked else "fewer_than_tracked")
+            rows.append(row)
+    return pd.DataFrame(rows, columns=FET_LINK_COLUMNS)
