@@ -1104,7 +1104,10 @@ document.addEventListener('DOMContentLoaded', boot);
 """
 
 
-def render_clinic(payload: dict, base_url: str, teable_url: str, base_id: str) -> str:
+def render_clinic(payload: dict, base_url: str, teable_url: str, base_id: str,
+                  standalone: bool = False) -> str:
+    """standalone — файл для передачи в клинику: без ссылок на Teable и на общий список
+    клиник (оба адреса — loopback этого ПК); данные из базы уже вшиты в payload."""
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     stages = json.dumps([s[0] for s in STAGE_SOURCES], ensure_ascii=False)
     models = json.dumps(MODEL_ROW, ensure_ascii=False)
@@ -1114,7 +1117,9 @@ def render_clinic(payload: dict, base_url: str, teable_url: str, base_id: str) -
     n_out = sum(1 for c in payload["cycles"] if c.get("preg") is not None)
     base_link = (f"<span class='pill'><a href='{html.escape(teable_url)}/base/"
                  f"{html.escape(base_id)}' target='_blank'>Открыть базу в Teable</a></span>"
-                 if base_id else "")
+                 if base_id and not standalone else "")
+    all_link = ("" if standalone else
+                f'<span class="pill"><a href="{html.escape(base_url)}/index.html">Все клиники</a></span>')
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1127,7 +1132,7 @@ def render_clinic(payload: dict, base_url: str, teable_url: str, base_id: str) -
   <span class="pill">{n_out} с известным исходом</span>
   <span class="pill">{n_rev} в ревью-листе</span>
   <span class="pill">собрано {html.escape(payload['built'])}</span>
-  <span class="pill"><a href="{html.escape(base_url)}/index.html">Все клиники</a></span>
+  {all_link}
   {base_link}
 </div></header>
 <div class="app">
@@ -1230,6 +1235,24 @@ def build(cfg: dict, only: str | None = None, history: bool = True) -> list[dict
     return entries
 
 
+def build_standalone(cfg: dict, code: str, out_path: str) -> None:
+    """Одна страница клиники для передачи наружу: история и архив из базы вшиваются,
+    ссылки на записи Teable не собираются."""
+    tb = tc.connect(cfg)
+    (clinic,) = tc.clinics(cfg, code)
+    hist = fetch_history(tb, clinic.base_id) if clinic.configured else {}
+    archive = fetch_archive(tb, clinic.base_id) if clinic.configured else {}
+    payload = build_payload(clinic, hist, {}, archive)
+    if not payload:
+        raise SystemExit(f"{clinic.name}: нет циклов для сборки")
+    tmp = out_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(render_clinic(payload, tc.cards_base_url(cfg), "", "", standalone=True))
+    os.replace(tmp, out_path)
+    print(f"  standalone: {clinic.name} -> {len(payload['cycles'])} циклов "
+          f"({round(os.path.getsize(out_path)/1024)} КБ) {out_path}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=tc.DEFAULT_CONFIG)
@@ -1237,9 +1260,17 @@ def main():
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--no-history", action="store_true",
                     help="skip the per-cycle run history read from Teable")
+    ap.add_argument("--standalone", metavar="HTML",
+                    help="with --clinic: one self-contained page without Teable links, "
+                         "for handing over to the clinic")
     args = ap.parse_args()
     cfg = tc.load_config(args.config)
-    build(cfg, only=args.clinic, history=not args.no_history)
+    if args.standalone:
+        if not args.clinic:
+            sys.exit("--standalone requires --clinic")
+        build_standalone(cfg, args.clinic, args.standalone)
+    else:
+        build(cfg, only=args.clinic, history=not args.no_history)
     print("Done.")
 
 
