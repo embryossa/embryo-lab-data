@@ -81,6 +81,7 @@ MODEL_ROW = [
     ("gnn", "GNN", "граф похожих циклов"),
     ("dnn", "DNN", "независимая проверочная сеть"),
     ("laya", "Laya", "внешний компаратор DT (laya_kan_ft), калибровка по центру; не член ансамбля"),
+    ("laya_raw", "Laya сырая", "Laya без калибровки центра: только ранжирование, абсолютный уровень завышен"),
 ]
 
 
@@ -278,7 +279,7 @@ def _run_cycles(proc: str, history: dict | None, record_links: dict | None) -> l
     tabpfn = _index_by(_read(os.path.join(proc, "tabpfn_predictions.csv")), "patient_id")
     reg = _index_by(_read(os.path.join(proc, "regression_qc.csv")), "cycle_uid")
     review = _index_by(_read(os.path.join(proc, "review_list.csv")), "cycle_uid")
-    ozema = _index_by(_read(os.path.join(proc, "ozema_cycles.csv")), "cycle_uid")
+    ozema, _ = tc.ozema_lookup(_read(os.path.join(proc, "ozema_cycles.csv")), None)
     opu = _read(os.path.join(proc, "OPU_table_enriched.xlsx"))
     opu_idx = _index_by(opu, "_key") if "_key" in opu.columns else {}
 
@@ -328,6 +329,7 @@ def _run_cycles(proc: str, history: dict | None, record_links: dict | None) -> l
             "gnn": _num(_pick(r, "p_gnn_ens", "p_gnn_raw")),
             "dnn": _num(r.get("DNN")),
             "laya": _num(r.get("Laya")),
+            "laya_raw": _num(r.get("laya_raw")),
             "tabpfn": _num(tp.get("p_tabpfn")) if tp else None,
         }
         risk = {
@@ -358,7 +360,7 @@ def _run_cycles(proc: str, history: dict | None, record_links: dict | None) -> l
                     break
 
         vrow = review.get(str(uid), {})
-        orow = ozema.get(str(uid), {})
+        orow = ozema.get(str(uid)) or ozema.get(str(key).strip().upper()) or {}
         preg = _num(r.get("Preg"))
 
         cycles.append({
@@ -586,6 +588,7 @@ def fetch_archive(tb: tc.Teable, base_id: str) -> dict:
                 "csdi": _num(pf.get("CSDI")), "gnn": _num(pf.get("GNN")),
                 "dnn": _num(pf.get("DNN")),
                 "laya": _num(pf.get("Laya")),
+                "laya_raw": _num(pf.get("Laya сырая")),
                 # p_tabpfn отдельной колонкой в базе не лежит: в неё уже сведён PRAI.
                 "tabpfn": None,
             },
@@ -815,7 +818,10 @@ function missingReason(c, k){
   if (k === 'gnn' && av.gnn === false) return 'не поднялась в прогоне';
   if (k === 'csdi' && av.csdi === false) return 'не поднялась в прогоне';
   if (k === 'dnn') return av.dnn ? 'нет оценки для цикла' : 'не запускалась';
-  if (k === 'laya') return av.laya_ok === false ? 'цикл непригоден для Laya' : 'не запускалась';
+  if (k === 'laya' || k === 'laya_raw') {
+    if (av.laya_ok === false) return 'цикл непригоден для Laya';
+    return k === 'laya' && av.laya_ok === true ? 'нет калибровки центра' : 'не запускалась';
+  }
   return 'нет значения';
 }
 

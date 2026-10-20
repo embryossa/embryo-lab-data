@@ -123,6 +123,69 @@ def cards_base_url(cfg: dict) -> str:
     return cfg.get("cards_url", "http://127.0.0.1:8788").rstrip("/")
 
 
+_OZEMA_SUM = ("COC", "MII", "2PN", "Cleav", "Bl")
+_OZEMA_EMPTY = ("—", "н/д", "")
+
+
+def ozema_lookup(df_oz, df_cand) -> tuple[dict, set]:
+    """OZEMA по циклу: {ключ: строка}, {ключи кандидатов на генетическое консультирование}.
+
+    Ключи — cycle_uid строки ozema_cycles.csv и, если в файле есть patient_id/date_opu,
+    ещё ключ программы `PATIENT_ID#ГГГГММДД` (тот же вид, что `_key` прогона). Второй
+    нужен клиникам, где OZEMA считается на строку-блок метода, а когорта — на программу
+    (PERSONA: кЭКО / ИКСИ / DO одной пункции — разные строки с разными cycle_uid). Блоки
+    одной программы сводятся: воронка суммируется, флаг — есть хотя бы у одного блока,
+    результаты тестов и флаги перечисляются через « / »."""
+    import pandas as pd
+    rows: dict = {}
+    if df_oz is None or df_oz.empty or "cycle_uid" not in df_oz.columns:
+        return rows, set()
+    cand_uids = set()
+    if df_cand is not None and not df_cand.empty and "cycle_uid" in df_cand.columns:
+        cand_uids = set(df_cand["cycle_uid"].astype(str))
+    cands = set(cand_uids)
+    for rec in df_oz.to_dict("records"):
+        rows[str(rec["cycle_uid"])] = rec
+    if not {"patient_id", "date_opu"} <= set(df_oz.columns):
+        return rows, cands
+    dates = pd.to_datetime(df_oz["date_opu"], errors="coerce").dt.strftime("%Y%m%d")
+    keys = df_oz["patient_id"].astype(str).str.strip().str.upper() + "#" + dates.fillna("NA")
+
+    def joined(values):
+        out = []
+        for v in values:
+            s = "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v).strip()
+            if s not in _OZEMA_EMPTY and s not in out:
+                out.append(s)
+        return " / ".join(out) or None
+
+    for key, g in df_oz.groupby(keys, sort=False):
+        if key in rows:
+            continue
+        recs = g.to_dict("records")
+        agg = dict(recs[0])
+        if len(recs) > 1:
+            for col in _OZEMA_SUM:
+                if col in g.columns:
+                    vals = pd.to_numeric(g[col], errors="coerce")
+                    agg[col] = float(vals.sum()) if vals.notna().any() else None
+            flagged = g["flagged"].astype(str).str.lower().isin(("true", "1", "1.0")) \
+                if "flagged" in g.columns else pd.Series(False, index=g.index)
+            agg["flagged"] = bool(flagged.any())
+            flags = joined(g["ozema_flag"]) if "ozema_flag" in g.columns else None
+            agg["ozema_flag"] = flags or (recs[0].get("ozema_flag") if not agg["flagged"] else None)
+            for col in ("OMA_result", "FF_result", "ZA_result", "EEA_result",
+                        "monitoring_note", "embryologist", "doctor"):
+                if col in g.columns:
+                    agg[col] = joined(g[col])
+            if "flagged_cycles_n" in g.columns:
+                agg["flagged_cycles_n"] = pd.to_numeric(g["flagged_cycles_n"], errors="coerce").max()
+        rows[key] = agg
+        if cand_uids & set(g["cycle_uid"].astype(str)):
+            cands.add(key)
+    return rows, cands
+
+
 # ---------------------------------------------------------------------------
 # Teable REST client
 # ---------------------------------------------------------------------------

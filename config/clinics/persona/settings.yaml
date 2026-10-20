@@ -28,11 +28,12 @@ persona:
 external_tools:
   laya:
     enabled: true
-    # Калибровки центра PERSONA в Laya нет (calibration.json знает только 4 центра RBMO;
-    # неизвестное имя -> ValueError). Пусто = сырая вероятность laya_raw, только для
-    # ранжирования; run_manifest: laya_status=ok_uncalibrated. Средний прогноз Laya на
-    # PERSONA выше наблюдаемой частоты на 15-16 п.п. (data/processed/persona/laya/).
-    centre: ""
+    # Калибровка центра PERSONA (2026-10-20, по запросу владельца): сдвиг интерсепта
+    # logit, подобранный на свежих переносах 2023–2025 (Laya/scripts/42_centre_persona.py;
+    # Laya −0.6535 на 1607, DT −0.5732 на 1136 per_transfer). Leave-one-year-out:
+    # O/E 0.95–1.03 после сдвига против ~0.68 без него. Калибровка подобрана на тех же
+    # годах, которые она калибрует, — для новых лет это внешняя проверка.
+    centre: "PERSONA"
     restore: true
   digital_twin:
     api:
@@ -67,6 +68,13 @@ external_tools:
     run_cmd: ""
     output: "data/processed/persona/evo_predictions.csv"
     scaler_path: ""
+    # Фолликулов в выгрузке нет, у DO-циклов не записаны инсеминированные — без
+    # импутации DNN отбрасывает все строки. Правило DT 7.1 --impute-dt71, как у Laya
+    # (согласие владельца 2026-10-19, для DNN — 2026-10-20): фолликулы = rint(ОКК/0.846),
+    # инсеминировано = MII у DO-циклов; пустое "Число Bl" — из P50 TabPFN-3. Только вход DNN.
+    impute_dt71: true
+    occ_per_follicle: 0.846
+    impute_bl_from_regression: true
   tabpfn_regression:
     enabled: true
     project_dir: ""

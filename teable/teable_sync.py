@@ -378,9 +378,9 @@ def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
     tabpfn = index_by(read_any(os.path.join(proc, FILES["tabpfn"])), "patient_id")
     regression = index_by(read_any(os.path.join(proc, FILES["regression"])), "cycle_uid")
     review = index_by(read_any(os.path.join(proc, FILES["review"])), "cycle_uid")
-    ozema = index_by(read_any(os.path.join(proc, FILES["ozema"])), "cycle_uid")
-    candidates = set(index_by(
-        read_any(os.path.join(proc, FILES["ozema_candidates"])), "cycle_uid"))
+    # по cycle_uid и по ключу программы (OZEMA на блоках метода — tc.ozema_lookup)
+    ozema, candidates = tc.ozema_lookup(read_any(os.path.join(proc, FILES["ozema"])),
+                                        read_any(os.path.join(proc, FILES["ozema_candidates"])))
 
     # cycle join key -> {"real": {...}, "pred": {...}, "uid": ...}
     patients: dict = {}
@@ -415,8 +415,8 @@ def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
                 and p["real"].get("preg") is not None)
     n_pos = sum(1 for p in patients.values() if str(p["real"].get("preg")) in ("1", "1.0"))
     n_review = sum(1 for p in patients.values() if str(p["uid"]) in review)
-    n_ozema = sum(1 for p in patients.values()
-                  if flag((ozema.get(str(p["uid"])) or {}).get("flagged")))
+    n_ozema = sum(1 for pid, p in patients.items()
+                  if flag((ozema.get(str(p["uid"])) or ozema.get(pid) or {}).get("flagged")))
     print(f"  Parsed: {n_pat} patients, {n_out} with outcome (+{n_pos}); "
           f"review {n_review}, OZEMA flags {n_ozema}. Run: {run_id}")
 
@@ -464,7 +464,7 @@ def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
         real, pred, uid = p["real"], p["pred"], p["uid"]
         cl = text(pred.get("cluster"))
         vrow = review.get(str(uid)) or {}
-        orow = ozema.get(str(uid)) or {}
+        orow = ozema.get(str(uid)) or ozema.get(pid) or {}
         tp = tabpfn.get(str(text(pred.get("patient_id")) or "")) or {}
         _, outside = regression_stage_fields(regression.get(str(uid)))
         prai = num(pred.get("prai"))
@@ -669,7 +669,7 @@ def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
     rows = []
     for pid, p in patients.items():
         uid = p["uid"]
-        o = ozema.get(str(uid))
+        o = ozema.get(str(uid)) or ozema.get(pid)
         if not o:
             continue
         rows.append(clean({
@@ -682,7 +682,7 @@ def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
             "OMA": text(o.get("OMA_result")), "FF": text(o.get("FF_result")),
             "ZA": text(o.get("ZA_result")), "EEA": text(o.get("EEA_result")),
             "Флагов у пациентки": num(o.get("flagged_cycles_n")),
-            "Кандидат на генетическое консультирование": str(uid) in candidates,
+            "Кандидат на генетическое консультирование": str(uid) in candidates or pid in candidates,
             "Примечание": text(o.get("monitoring_note")),
             "Эмбриолог": text(o.get("embryologist")), "Врач": text(o.get("doctor")),
         }))

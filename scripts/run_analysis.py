@@ -394,43 +394,71 @@ def _join_dnn(predictions: pd.DataFrame, dnn: pd.DataFrame | None) -> pd.DataFra
     return out.drop(columns="__dnn_key")
 
 
-def _dnn_input_with_bl_imputation(model_input_path: Path, clean_regression: pd.DataFrame | None,
-                                  dcfg: dict, private_dir: Path) -> tuple[Path, int]:
-    """Заполняет "Число Bl" в строках, где 1С его не дала (криоперенос), значением из
-    P50 прогноза TabPFN-3 regression — ТОЛЬКО для входа DNN, чтобы Evo_calculations.py
-    не отбрасывал эти циклы. "Частота формирования бластоцист" DNN пересчитывает сам
-    из "Число Bl"/"2 pN". Vienna KPI/OZEMA этот файл не читают; ноль как замена
-    пропуска не используется — подставляется модельная оценка. Возвращает
-    (path, n_imputed); при выключенном гейте или отсутствии регрессии — исходный путь.
-    """
-    if not dcfg.get("impute_bl_from_regression", False) or clean_regression is None:
-        return model_input_path, 0
+def _dnn_formula_fill(frame: pd.DataFrame, dcfg: dict) -> dict[str, int]:
+    """Правило DT 7.1 `--impute-dt71` для клиник без фолликулов (PERSONA, согласие
+    владельца 2026-10-19/20) — ТОЛЬКО для входа DNN: фолликулы = rint(ОКК/0.846), у
+    DO-циклов (инсеминированные не записаны) инсеминировано = MII. Нули в
+    model_input у этих колонок — заливка исторической формулы KPIScore
+    (kpi.compute_kpi), а не наблюдение, поэтому 0 трактуется как пропуск. Флаги
+    dnn_follicles_imputed / dnn_inseminated_imputed. Меняет frame на месте."""
+    counts: dict[str, int] = {}
+    if not dcfg.get("impute_dt71", False):
+        return counts
+    occ = pd.to_numeric(frame.get("Число ОКК"), errors="coerce")
+    fol = pd.to_numeric(frame.get("Количество фолликулов"), errors="coerce")
+    need = (fol.isna() | fol.le(0)) & occ.gt(0)
+    frame.loc[need, "Количество фолликулов"] = np.rint(occ[need] / float(dcfg.get("occ_per_follicle", 0.846)))
+    frame["dnn_follicles_imputed"] = need
+    counts["follicles"] = int(need.sum())
+    if "MII" in frame.columns and "Число инсеминированных" in frame.columns:
+        ins = pd.to_numeric(frame["Число инсеминированных"], errors="coerce")
+        raw = pd.to_numeric(frame["inseminated"], errors="coerce") if "inseminated" in frame.columns \
+            else pd.Series(np.nan, index=frame.index)
+        donor = pd.to_numeric(frame.get("donor_mii"), errors="coerce").gt(0) \
+            if "donor_mii" in frame.columns else pd.Series(False, index=frame.index)
+        mii = pd.to_numeric(frame["MII"], errors="coerce")
+        need = (ins.isna() | ins.le(0)) & raw.isna() & donor & mii.gt(0)
+        frame.loc[need, "Число инсеминированных"] = mii[need]
+        frame["dnn_inseminated_imputed"] = need
+        counts["inseminated"] = int(need.sum())
+    return counts
+
+
+def _dnn_input(model_input_path: Path, clean_regression: pd.DataFrame | None,
+               dcfg: dict, private_dir: Path) -> tuple[Path, dict[str, int]]:
+    """Готовит вход DNN — ТОЛЬКО для Evo_calculations.py, чтобы он не отбрасывал циклы.
+    Vienna KPI/OZEMA этот файл не читают; ноль как замена пропуска не используется.
+    * гейт impute_bl_from_regression: "Число Bl", которого 1С не дала (криоперенос), —
+      из P50 прогноза TabPFN-3 regression ("Частота формирования бластоцист" DNN
+      пересчитывает сам из "Число Bl"/"2 pN");
+    * гейт impute_dt71: фолликулы и инсеминированные по формулам (_dnn_formula_fill).
+    Возвращает (path, счётчики импутаций); без импутаций — исходный путь."""
+    frame = pd.read_excel(model_input_path).copy()  # консолидировать блоки перед вставкой флагов
+    counts = _dnn_formula_fill(frame, dcfg)
     bl_col = "Число Bl"
-    frame = pd.read_excel(model_input_path)
-    if bl_col not in frame.columns or "cycle_uid" not in frame.columns:
-        return model_input_path, 0
-    p50_col = next((c for c in ("TPFN3_blasts_after_fert_p50", "TPFN3_blasts_early_p50")
-                    if c in clean_regression.columns), None)
-    if p50_col is None:
-        return model_input_path, 0
-    est = clean_regression[["cycle_uid", p50_col]].rename(columns={p50_col: "_bl_p50"})
-    merged = frame.merge(est, on="cycle_uid", how="left", validate="one_to_one")
-    two_pn = pd.to_numeric(merged.get("2 pN"), errors="coerce")
-    bl_p50 = pd.to_numeric(merged["_bl_p50"], errors="coerce").round().clip(lower=0)
-    # бластоцист не больше, чем 2pN
-    bl_p50 = pd.concat([bl_p50, two_pn], axis=1).min(axis=1)
-    need = merged[bl_col].isna() & bl_p50.notna()
-    merged.loc[need, bl_col] = bl_p50[need]
-    n_imputed = int(need.sum())
-    if n_imputed == 0:
-        return model_input_path, 0
-    merged["bl_ml_fallback"] = need
-    merged = merged.drop(columns="_bl_p50")
+    p50_col = None if clean_regression is None else next(
+        (c for c in ("TPFN3_blasts_after_fert_p50", "TPFN3_blasts_early_p50")
+         if c in clean_regression.columns), None)
+    if (dcfg.get("impute_bl_from_regression", False) and p50_col is not None
+            and bl_col in frame.columns and "cycle_uid" in frame.columns):
+        est = clean_regression[["cycle_uid", p50_col]].rename(columns={p50_col: "_bl_p50"})
+        frame = frame.merge(est, on="cycle_uid", how="left", validate="one_to_one")
+        two_pn = pd.to_numeric(frame.get("2 pN"), errors="coerce")
+        bl_p50 = pd.to_numeric(frame["_bl_p50"], errors="coerce").round().clip(lower=0)
+        # бластоцист не больше, чем 2pN
+        bl_p50 = pd.concat([bl_p50, two_pn], axis=1).min(axis=1)
+        need = frame[bl_col].isna() & bl_p50.notna()
+        frame.loc[need, bl_col] = bl_p50[need]
+        frame["bl_ml_fallback"] = need
+        frame = frame.drop(columns="_bl_p50")
+        counts["bl"] = int(need.sum())
+    counts = {k: v for k, v in counts.items() if v}
+    if not counts:
+        return model_input_path, counts
     out_path = private_dir / "model_input_dnn.xlsx"
-    _io.atomic_write_excel({"model_input": merged}, out_path)
-    print(f"[model-input] DNN: 'Число Bl' импутировано из P50 regression у {n_imputed} "
-          f"криопереносных строк -> {out_path.name}")
-    return out_path, n_imputed
+    _io.atomic_write_excel({"model_input": frame}, out_path)
+    print(f"[model-input] DNN: импутировано {counts} -> {out_path.name}")
+    return out_path, counts
 
 
 def _records(frame: pd.DataFrame | None) -> list[dict]:
@@ -884,7 +912,7 @@ def main(argv: list[str] | None = None) -> int:
         # EVO — необязательная кросс-проверка (см. settings.local.yaml), не должна
         # гейтить пайплайн: тот же мягкий паттерн, что и у tabpfn_regression выше.
         try:
-            dnn_input_path, dnn_imputed = _dnn_input_with_bl_imputation(
+            dnn_input_path, dnn_imputed = _dnn_input(
                 model_input_path, clean_regression, dcfg, private)
             dnn_frame = dnn_runner.run_dnn_verifier(dcfg, str(dnn_input_path))
             dnn_status = "valid_saved_scaler"

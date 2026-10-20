@@ -81,9 +81,23 @@ python scripts/run_analysis.py --persona 2024              # полный про
 `--persona <год>` = `--clinic persona` + вход `staged/persona_<год>.xlsx` + выходы
 (processed, local_private, agent_packets, crosswalk, выходы TabPFN/DNN/регрессии) в
 `data/processed/persona/<год>/`. Секрет `cycle_uid` общий для всех лет и демо-экспорта.
-Laya в пайплайне — без калибровки центра (`centre: ""`, статус `ok_uncalibrated`,
-покрытие по `laya_raw`); restore Laya ставит фолликулы = ОКК, в отличие от демо-анализа
-(`--impute-dt71`, `rint(ОКК/0.846)`).
+Laya в пайплайне — с калибровкой центра PERSONA (`centre: "PERSONA"`, с 2026-10-20 по
+запросу владельца): сдвиг интерсепта logit, подобран на свежих переносах 2023–2025
+(`Laya/scripts/42_centre_persona.py`; leave-one-year-out O/E 0.95–1.03). Restore Laya
+ставит фолликулы = ОКК, в отличие от демо-анализа (`--impute-dt71`, `rint(ОКК/0.846)`).
+
+DNN/EVO (согласие владельца 2026-10-20): вход DNN дозаполняется по правилу DT 7.1
+(`dnn_verifier.impute_dt71`) — фолликулы = `rint(ОКК/0.846)`, инсеминировано = MII у
+DO-циклов; пустое «Число Bl» — из P50 TabPFN-3. Только вход DNN, не KPI/OZEMA.
+
+Досчёт завершённых прогонов без повторного DT/TabPFN: `scripts/dnn_backfill.py --persona <год>`,
+`scripts/laya_backfill.py --persona <год>` (пишут `dt_predictions.csv` и `run_manifest.json`;
+HTML и agent_packets не меняются). Метрики для статьи — `scripts/persona_metrics_report.py`
+(→ `data/processed/persona/PERSONA_metrics_2023_2025.md`). Файл калибровки DT 7.1 для
+клиники (шаблон «Калибровка переносов») — `scripts/persona_dt_calibration_export.py --out <папка>`.
+Teable: клиника `persona` в реестре, `processed_dir` = 2025 + `supplemental_dirs` 2024/2023;
+OZEMA считается на блоках метода и в Teable/карточках сопоставляется с программой по
+`patient_id#дата пункции` (`teable_common.ozema_lookup`).
 
 Демо-дашборд: `ivf-lab-kpi-ews-demo`, `--input <demo_export/persona_<год>.csv> --name persona_<год>`.
 Laya (уровень цикла, решение владельца): `scripts/ews_laya.py --name persona_<год>_cycles
