@@ -193,9 +193,17 @@ def main() -> None:
                 f"invalid TabPFN probability/CI for {patient_id.iloc[pos]}: "
                 f"p={probability}, CI=[{ci_low}, {ci_high}]"
             )
+        # ci_low/ci_high — разброс по MC-строкам неизвестных стадий воронки (0, если все
+        # стадии известны); ens_* — разброс членов ансамбля TabPFN (неопределённость модели).
+        spread = (tb.member_spread(clf, simulated["features"], max_query=cfg["max_query"], seed=cfg["seed"])
+                  if hasattr(tb, "member_spread") else {"ens_low": None, "ens_high": None,
+                                                        "ens_sd": None, "n_members": 0})
+        rnd = lambda v: None if v is None else round(float(v), 4)  # noqa: E731
         record = {"run_id": args.run_id, "patient_id": patient_id.iloc[pos],
                   "p_tabpfn": round(probability, 4), "ci_low": round(ci_low, 4),
-                  "ci_high": round(ci_high, 4)}
+                  "ci_high": round(ci_high, 4), "ens_low": rnd(spread["ens_low"]),
+                  "ens_high": rnd(spread["ens_high"]), "ens_sd": rnd(spread["ens_sd"]),
+                  "n_members": int(spread["n_members"])}
         output.append(record)
         _append_audit({
             "timestamp": dt.datetime.now().isoformat(timespec="seconds"), "run_id": args.run_id,
@@ -210,7 +218,9 @@ def main() -> None:
             "dt_compare": (round(float(dt_compare.iloc[pos]), 4)
                            if pd.notna(dt_compare.iloc[pos]) else None),
         })
-        print(f"  [{pos + 1}/{len(frame)}] p={probability:.3f} CI [{ci_low:.3f};{ci_high:.3f}]")
+        ens = ("" if record["ens_low"] is None
+               else f" ensemble [{record['ens_low']:.3f};{record['ens_high']:.3f}]")
+        print(f"  [{pos + 1}/{len(frame)}] p={probability:.3f} stages [{ci_low:.3f};{ci_high:.3f}]{ens}")
 
     target = _atomic_csv(pd.DataFrame(output), args.output_path)
     print(f"[tabpfn] snapshot -> {target}")

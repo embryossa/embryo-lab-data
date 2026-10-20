@@ -118,3 +118,21 @@ def test_contract_rejects_duplicate_and_bad_ci_probability():
     with pytest.raises(ValueError):
         TABPFN_OUTPUT.validate(bad)
 
+
+
+def test_tabpfn_ensemble_spread_is_carried_separately_from_funnel_range():
+    # ci_low/ci_high — диапазон по неизвестным стадиям воронки (0 при полной воронке);
+    # разброс членов ансамбля TabPFN приходит отдельными колонками ens_* (адаптер 2026-10-20).
+    dt, tab, opu = _tables()
+    tab = tab.assign(ens_low=[0.0, 0.40], ens_high=[0.0, 0.62], ens_sd=[0.0, 0.08], n_members=[8, 8])
+    out = build_dt_predictions(dt, tab, opu, b"secret", threshold_pp=20).set_index("patient_id")
+    assert out.loc["AB-2", "tabpfn_ens_width_pp"] == pytest.approx(22)
+    assert out.loc["AB-2", "ci_width_pp"] == pytest.approx(25)
+    assert out.loc["AB-2", "tabpfn_n_members"] == 8
+    assert pd.isna(out.loc["AB-3", "tabpfn_ens_low"])
+
+
+def test_tabpfn_output_without_ensemble_columns_still_joins():
+    dt, tab, opu = _tables()
+    out = build_dt_predictions(dt, tab, opu, b"secret", threshold_pp=20)
+    assert out["tabpfn_ens_width_pp"].isna().all()

@@ -76,6 +76,12 @@ OZEMA_FLAG_CHOICES = [{"name": n, "color": "redLight1"} for n in
                      [{"name": "—", "color": "greenLight1"},
                       {"name": "н/д", "color": "grayLight1"}]
 
+FET_LINK_CHOICES = [{"name": n, "color": c} for n, c in [
+    ("single_opu", "greenLight1"), ("nearest_with_stock", "yellowLight1"),
+    ("stock_exhausted", "orangeLight1"), ("no_opu_in_data", "grayLight1")]]
+FET_CHECK_CHOICES = [{"name": n, "color": c} for n, c in [
+    ("match", "greenLight1"), ("more_than_tracked", "yellowLight1"),
+    ("fewer_than_tracked", "orangeLight1"), ("unknown", "grayLight1")]]
 MODEL_CHOICES = [{"name": m} for m in
                  ["MC", "Bayes", "KAT", "NVSA", "CSDI", "GNN", "DT", "TabPFN", "DNN", "PRAI", "Laya"]]
 
@@ -185,7 +191,9 @@ def schema(tz="Asia/Tashkent"):
             f("Ширина CI, пп", num(1)), f("Приоритет ревью", sel(PRIORITY_CHOICES)),
             f("Флаг OZEMA", sel(OZEMA_FLAG_CHOICES)), f("Есть флаг OZEMA", check()),
             f("Стадий вне интервала", num(0)),
-            f("Прогонов", num(0)), f("Последний прогон", txt())]},
+            f("Прогонов", num(0)), f("Последний прогон", txt()),
+            # Криопереносы, связанные с этой пункцией (FET table; PERSONA — persona.link_fets).
+            f("Криопереносов", num(0)), f("Беременностей после криопереносов", num(0))]},
 
         {"key": "Predictions", "name": "Predictions — Прогнозы моделей", "fields": [
             f("Ключ", txt()), f("Пациентка", link("Cycles")), f("Прогон", link("Runs")),
@@ -196,6 +204,11 @@ def schema(tz="Asia/Tashkent"):
             # pregnancy probability, model by model
             f("PRAI (TabPFN)", num(3)), f("PRAI CI низ", num(3)), f("PRAI CI верх", num(3)),
             f("Ширина CI, пп", num(1)), f("Широкий CI", check()),
+            # «PRAI CI …» / «Ширина CI» — исторические имена полей (переименование сломало бы
+            # накопленные базы): это диапазон по НЕИЗВЕСТНЫМ стадиям воронки, не ДИ модели
+            # (0 при полной воронке). Неопределённость модели — разброс членов ансамбля TabPFN.
+            f("TabPFN ансамбль низ", num(3)), f("TabPFN ансамбль верх", num(3)),
+            f("Разброс ансамбля TabPFN, пп", num(1)),
             f("DIGITAL TWIN", num(3)), f("P per transfer", num(3)),
             f("P overall cycle", num(3)), f("P cum if viable", num(3)),
             f("Bayes mean", num(3)), f("Bayes CI низ", num(3)), f("Bayes CI верх", num(3)),
@@ -257,6 +270,19 @@ def schema(tz="Asia/Tashkent"):
             f("Флагов у пациентки", num(0)),
             f("Кандидат на генетическое консультирование", check()),
             f("Примечание", longtxt()), f("Эмбриолог", txt()), f("Врач", txt())]},
+
+        # Криопереносы и их связь с пункцией-источником эмбрионов. Заполняется, если у
+        # клиники в реестре задан fet_links (сейчас PERSONA: scripts/persona_fet_link.py);
+        # одна запись на криоперенос навсегда (upsert по «Ключ» = fet_uid), не по прогону.
+        {"key": "FET", "name": "FET — Криопереносы", "fields": [
+            f("Ключ", txt()), f("Пункция", link("Cycles")), f("Пациентка", txt()),
+            f("ID пациента", txt()), f("Дата переноса", d()), f("Дата пункции", d()),
+            f("Дней от пункции", num(0)), f("День ПЕ", num(0)), f("Перенесено", num(0)),
+            f("Разморожено", num(0)), f("Учтено как", txt()), f("Заморожено на пункции", num(0)),
+            f("Остаток пункции до переноса", num(0)), f("Остатки эмбрионов (выгрузка)", num(0)),
+            f("Учтённый остаток", num(0)), f("Сверка остатков", sel(FET_CHECK_CHOICES)),
+            f("Связь", sel(FET_LINK_CHOICES)), f("Кандидатов", num(0)), f("Суррогатная мать", check()),
+            f("Исход", sel(OUTCOME_CHOICES))]},
 
         {"key": "Calibration", "name": "Calibration — Калибровка моделей", "fields": [
             f("Ключ", txt()), f("Прогон", link("Runs")), f("Модель", sel(MODEL_CHOICES)),

@@ -43,33 +43,40 @@ def test_prognosis_is_absent_when_no_probability_is_known():
     assert "prognosis_level" not in flags
 
 
-# ----------------------------------------------------- ширина ДИ [FIX ci]
+# ------------------------------------------- неопределённость TabPFN [FIX ci]
 
-def test_ci_category_is_read_from_the_field_the_pipeline_actually_fills():
-    # Регрессия: раньше искали bayes_ci_low/ci_kat_low, которых в join-фрейме нет.
-    assert consult.build_flags(_row(ci_width_pp=12.0))["CI_category"] == "low_statistical_uncertainty"
-    assert consult.build_flags(_row(ci_width_pp=22.0))["CI_category"] == "moderate_statistical_uncertainty"
-    assert consult.build_flags(_row(ci_width_pp=35.0))["CI_category"] == "high_statistical_uncertainty"
+def test_ci_category_comes_from_the_tabpfn_ensemble_spread():
+    assert consult.build_flags(_row(tabpfn_ens_width_pp=12.0))["CI_category"] == "low_statistical_uncertainty"
+    assert consult.build_flags(_row(tabpfn_ens_width_pp=22.0))["CI_category"] == "moderate_statistical_uncertainty"
+    flags = consult.build_flags(_row(tabpfn_ens_width_pp=35.0))
+    assert flags["CI_category"] == "high_statistical_uncertainty"
+    assert flags["CI_source"] == "tabpfn_ensemble"
 
 
-def test_ci_width_is_derived_from_bounds_when_the_field_is_absent():
-    row = _row(ci_low=0.30, ci_high=0.65)
-    row.pop("ci_width_pp")
-    flags = consult.build_flags(row)
+def test_ensemble_width_is_derived_from_member_bounds():
+    flags = consult.build_flags(_row(tabpfn_ens_low=0.30, tabpfn_ens_high=0.65))
     assert flags["CI_width_pp"] == 35.0
     assert flags["CI_category"] == "high_statistical_uncertainty"
 
 
-def test_degenerate_ci_is_reported_as_not_computed_not_as_high_precision():
-    # 0.01 пп — это НЕ бесконечно точный прогноз, а непосчитанный интервал.
-    flags = consult.build_flags(_row(ci_width_pp=0.01))
+def test_funnel_stage_range_is_not_a_model_ci():
+    # ci_width_pp — разброс по неизвестным стадиям воронки (0 при полной воронке), а не
+    # ДИ модели: отдельное поле, в категорию надёжности не входит.
+    flags = consult.build_flags(_row(ci_width_pp=35.0))
+    assert flags["funnel_unknown_range_pp"] == 35.0
+    assert "CI_category" not in flags
+    assert "не рассчитан" in flags["CI_note"]
+
+
+def test_degenerate_ensemble_spread_is_reported_as_not_computed():
+    flags = consult.build_flags(_row(tabpfn_ens_width_pp=0.01))
     assert "CI_category" not in flags
     assert "не рассчитан" in flags["CI_note"]
     assert flags["CI_width_pp"] == 0.0
 
 
-def test_exactly_zero_ci_is_degenerate_too():
-    flags = consult.build_flags(_row(ci_width_pp=0.0))
+def test_exactly_zero_ensemble_spread_is_degenerate_too():
+    flags = consult.build_flags(_row(tabpfn_ens_width_pp=0.0))
     assert "CI_category" not in flags and "CI_note" in flags
 
 
@@ -107,21 +114,21 @@ def test_no_uncertainty_signal_yields_insufficient_evidence_not_grade_b():
 
 
 def test_grade_a_requires_both_narrow_ci_and_model_agreement():
-    flags = consult.build_flags(_row(ci_width_pp=10.0, **{"DIGITAL TWIN": 0.62, "PRAI": 0.60}))
+    flags = consult.build_flags(_row(tabpfn_ens_width_pp=10.0, **{"DIGITAL TWIN": 0.62, "PRAI": 0.60}))
     assert flags["confidence_grade"] == "A"
     assert flags["confidence_grade_reason"] == "narrow_CI_and_model_agreement"
 
 
 def test_degenerate_ci_cannot_earn_grade_a():
     # Именно так два цикла Fertimed получили высшую оценку за непосчитанный ДИ.
-    flags = consult.build_flags(_row(ci_width_pp=0.01, **{"DIGITAL TWIN": 0.62, "PRAI": 0.60}))
+    flags = consult.build_flags(_row(tabpfn_ens_width_pp=0.01, **{"DIGITAL TWIN": 0.62, "PRAI": 0.60}))
     assert flags["confidence_grade"] != "A"
 
 
 def test_grade_c_on_wide_ci_or_model_disagreement():
-    wide = consult.build_flags(_row(ci_width_pp=40.0))
+    wide = consult.build_flags(_row(tabpfn_ens_width_pp=40.0))
     assert wide["confidence_grade"] == "C" and wide["confidence_grade_reason"] == "wide_CI"
-    disagree = consult.build_flags(_row(ci_width_pp=10.0, **{"DIGITAL TWIN": 0.9, "PRAI": 0.3}))
+    disagree = consult.build_flags(_row(tabpfn_ens_width_pp=10.0, **{"DIGITAL TWIN": 0.9, "PRAI": 0.3}))
     assert disagree["confidence_grade"] == "C"
     assert disagree["confidence_grade_reason"] == "model_disagreement"
 
@@ -199,7 +206,7 @@ def test_ensemble_packet_exposes_every_documented_layer():
     assert packet["L7_BEFE"]["DIGITAL_TWIN_%"] == 62.0
     assert set(packet["флаги_уверенности"]) <= {
         "CI_category", "agreement_category", "confidence_grade",
-        "CI_width_pp", "ensemble_spread_pp"}
+        "CI_width_pp", "CI_source", "funnel_unknown_range_pp", "ensemble_spread_pp"}
 
 
 def test_cohort_packet_states_the_privacy_boundary_and_serialises_review_list():

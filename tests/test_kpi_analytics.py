@@ -117,7 +117,7 @@ def test_ci_wide_is_added_to_review_after_joined_flag(tmp_path: Path):
     assert result["review_list"]["ID"].tolist() == ["B"]
     reviewed = result["df_u"].set_index("ID").loc["B"]
     assert reviewed["priority"] == 2
-    assert "CI TabPFN" in reviewed["reason"]
+    assert "диапазон по неизвестным стадиям" in reviewed["reason"]
     assert "KPI Overall" in pd.ExcelFile(report).sheet_names
 
 

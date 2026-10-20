@@ -104,6 +104,9 @@ PRED_COLS = {
     "ci_high":      ["ci_high", "rate_ci_high"],
     "ci_width":     ["ci_width_pp"],
     "ci_wide":      ["ci_wide"],
+    "ens_low":      ["tabpfn_ens_low"],
+    "ens_high":     ["tabpfn_ens_high"],
+    "ens_width":    ["tabpfn_ens_width_pp"],
     "p_per_transfer": ["p_per_transfer"],
     "p_overall":    ["p_overall_cycle", "p_overall"],
     "p_cum":        ["p_cum_if_viable"],
@@ -341,7 +344,65 @@ def sync_clinic(cfg, tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
         if proc != clinic.processed_dir:
             print(f"  --- дополнительный прогон: {proc}")
         synced = sync_run(cfg, tb, clinic, proc, args) or synced
+    if clinic.fet_links and not getattr(args, "cycles_only", False):
+        synced = sync_fet(tb, clinic, args) or synced
     return synced
+
+
+def sync_fet(tb: tc.Teable, clinic: tc.Clinic, args) -> bool:
+    """Таблица FET: одна запись на криоперенос (upsert по fet_uid) + итоги на пункции.
+
+    Связь с пункцией — по ключу пункции из локального файла (тот же «ID пациента», что у
+    записи Cycles); криоперенос без пункции в данных хранится без связи."""
+    pub, priv = read_any(clinic.fet_links), read_any(clinic.fet_links_private)
+    if pub.empty:
+        print(f"  [skip] FET: нет {clinic.fet_links}")
+        return False
+    if args.dry_run:
+        print(f"  [dry-run] FET: {len(pub)} криопереносов, связано {int(pub['opu_cycle_uid'].notna().sum())}")
+        return False
+    tables = tc.resolve_tables(tb, clinic.base_id)
+    if "FET" not in tables:
+        print("  [skip] в базе нет таблицы FET — запустите teable_bootstrap.py")
+        return False
+    who = index_by(priv, "fet_uid")
+    cycles = {norm_id(r["fields"].get("ID пациента")): r["id"]
+              for r in tb.all_records(tables["Cycles"]) if r["fields"].get("ID пациента")}
+    existing = {r["fields"].get("Ключ"): r["id"] for r in tb.all_records(tables["FET"])}
+    creates, updates, per_opu = [], [], {}
+    for _, r in pub.iterrows():
+        p = who.get(str(r["fet_uid"]), {})
+        opu_key = norm_id(p.get("opu_key"))
+        linked = opu_key if opu_key in cycles else None
+        fields = clean({
+            "Ключ": text(r["fet_uid"]), "Пункция": linked,
+            "Пациентка": text(p.get("patient_name")), "ID пациента": norm_id(p.get("patient_id")),
+            "Дата переноса": iso_date(r.get("fet_date")), "Дата пункции": iso_date(r.get("opu_date")),
+            "Дней от пункции": num(r.get("days_from_opu")), "День ПЕ": num(r.get("transfer_day")),
+            "Перенесено": num(r.get("transferred_fet")), "Разморожено": num(r.get("thawed_fet")),
+            "Учтено как": text(r.get("consumed_from")), "Заморожено на пункции": num(r.get("opu_frozen")),
+            "Остаток пункции до переноса": num(r.get("opu_stock_before")),
+            "Остатки эмбрионов (выгрузка)": num(r.get("embryos_remaining")),
+            "Учтённый остаток": num(r.get("tracked_remaining")),
+            "Сверка остатков": text(r.get("remaining_check")), "Связь": text(r.get("link_status")),
+            "Кандидатов": num(r.get("candidates_n")), "Суррогатная мать": flag(r.get("surrogate")),
+            "Исход": preg_label(r.get("Preg")),
+        })
+        if linked:
+            agg = per_opu.setdefault(linked, [0, 0])
+            agg[0] += 1
+            agg[1] += 1 if str(r.get("Preg")) in ("1", "1.0") else 0
+        if fields["Ключ"] in existing:
+            updates.append((existing[fields["Ключ"]], fields))
+        else:
+            creates.append(fields)
+    tb.create_records(tables["FET"], creates)
+    tb.update_records(tables["FET"], updates)
+    tb.update_records(tables["Cycles"], [(cycles[k], {"Криопереносов": n, "Беременностей после криопереносов": g})
+                                         for k, (n, g) in per_opu.items()])
+    print(f"  FET: +{len(creates)} новых, {len(updates)} обновлено; связано с пункцией "
+          f"{sum(n for n, _ in per_opu.values())}, пункций с криопереносами {len(per_opu)}.")
+    return True
 
 
 def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
@@ -563,6 +624,9 @@ def sync_run(cfg, tb: tc.Teable, clinic: tc.Clinic, proc: str, args) -> bool:
                             else num(tp.get("ci_high")),
             "Ширина CI, пп": num(pred.get("ci_width")),
             "Широкий CI": flag(pred.get("ci_wide")),
+            "TabPFN ансамбль низ": num(pred.get("ens_low")),
+            "TabPFN ансамбль верх": num(pred.get("ens_high")),
+            "Разброс ансамбля TabPFN, пп": num(pred.get("ens_width")),
             "DIGITAL TWIN": num(pred.get("dt_headline")),
             "P per transfer": num(pred.get("p_per_transfer")),
             "P overall cycle": num(pred.get("p_overall")),

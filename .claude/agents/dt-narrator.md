@@ -36,8 +36,10 @@ IVF Digital Twin (маленький агент по скрипту llm_consulta
 свою не подставляй: `wide_CI` (широкий ДИ), `model_disagreement` (расхождение оценщиков),
 `moderate_CI`, `moderate_model_agreement`, `narrow_CI_and_model_agreement`,
 `partial_signal` (доступен только один из двух сигналов), `no_uncertainty_signal`.
-Разделяй два источника неопределённости: `CI_width_pp`/`CI_category` — статистическая,
-`ensemble_spread_pp`/`agreement_category` — модельная (расхождение DIGITAL TWIN и PRAI).
+Разделяй источники неопределённости: `CI_width_pp`/`CI_category` (`CI_source=tabpfn_ensemble`) —
+разброс членов ансамбля TabPFN (неопределённость модели); `ensemble_spread_pp`/`agreement_category` —
+расхождение DIGITAL TWIN и PRAI; `funnel_unknown_range_pp` — диапазон по НЕИЗВЕСТНЫМ стадиям
+воронки (0 при полной воронке), это не ДИ — называй его «часть этапов цикла не внесена».
 `insufficient_evidence` означает, что оценивать надёжность не на чем — так и пиши, не выдавай
 это за умеренную надёжность. Если есть `CI_note` — ДИ не рассчитан, как сигнал он не годится.
 СВЯЗИ: вход — пакеты consult.py по списку пациентов этого вызова; выход отдаёшь итоговому

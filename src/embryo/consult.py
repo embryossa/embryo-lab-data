@@ -36,38 +36,41 @@ def build_flags(row: dict, primary_prob=("DIGITAL TWIN", "bayes_mean", "p_per_tr
         f["prognosis_level"] = ("favorable" if pp >= 55 else "good" if pp >= 40
                                 else "moderate" if pp >= 25 else "low")
 
-    # [FIX ci] Ширину ДИ пайплайн уже посчитал и положил в `ci_width_pp`, но
-    # искали её только под именами bayes_ci_low/ci_kat_low, которых в join-фрейме
-    # нет. Из-за этого CI_category не вычислялась НИКОГДА. Теперь сначала берём
-    # готовое поле, и только если его нет — выводим из границ.
-    w = _g(row, "ci_width_pp")
+    # Неопределённость модели TabPFN = разброс вероятности между членами ансамбля
+    # (tabpfn_ens_*, адаптер с 2026-10-20). Прежний `ci_width_pp` — НЕ ДИ: это разброс по
+    # Монте-Карло-вариантам НЕИЗВЕСТНЫХ стадий воронки, ровно 0 при полной воронке
+    # (проверено на всех клиниках 2026-10-20). Он идёт отдельным полем и в категорию
+    # надёжности не входит. Пороги 15/30 пп перенесены с прежнего поля — проверить на
+    # первых прогонах с ансамблем.
+    w = _g(row, "tabpfn_ens_width_pp")
     if w is None:
-        lo = _g(row, "bayes_ci_low", "ci_kat_low", "ci_low")
-        hi = _g(row, "bayes_ci_high", "ci_kat_high", "ci_high")
+        lo, hi = _g(row, "tabpfn_ens_low"), _g(row, "tabpfn_ens_high")
         if lo is not None and hi is not None:
             w = round((hi - lo) * 100, 1)
-    # Вырожденная ширина ДИ — так выглядит НЕпосчитанный интервал, а не
-    # бесконечно точный прогноз. Трактовать её как «низкую статистическую
-    # неопределённость» значит выдать отсутствие данных за высокую точность
-    # (в когорте ggrc это все 225 циклов).
-    #
-    # Порог не «ровно 0»: артефакт приходит и с плавающей погрешностью. В
-    # прогоне Fertimed 2026-07-29 из 164 циклов с шириной <1 пп ровно нулевых
-    # было 162, а два несли 0.01 пп — они проходили проверку `w > 0`, получали
-    # «низкую неопределённость» (0.01 < 15) и округлялись до 0.0 только при
-    # выводе. Один из них получил за это высшую оценку надёжности A.
-    # 0.1 пп — это заведомо ниже любого реального 95% ДИ вероятности
-    # беременности, так что порог не может съесть настоящий узкий интервал.
+    funnel = _g(row, "ci_width_pp")
+    if funnel is None:
+        lo, hi = _g(row, "ci_low"), _g(row, "ci_high")
+        if lo is not None and hi is not None:
+            funnel = (hi - lo) * 100
+    if funnel is not None:
+        f["funnel_unknown_range_pp"] = round(float(funnel), 1)
+    # Вырожденная ширина — непосчитанный разброс, а не бесконечно точный прогноз
+    # (прецедент: два цикла Fertimed с 0.01 пп получили оценку A). 0.1 пп заведомо ниже
+    # любого реального разброса вероятности беременности.
     _DEGENERATE_CI_PP = 0.1
     if w is not None and w >= _DEGENERATE_CI_PP:
         f["CI_width_pp"] = round(float(w), 1)
+        f["CI_source"] = "tabpfn_ensemble"
         f["CI_category"] = ("low_statistical_uncertainty" if w < 15
                             else "moderate_statistical_uncertainty" if w < 30
                             else "high_statistical_uncertainty")
     elif w is not None:
         f["CI_width_pp"] = round(float(w), 1)
-        f["CI_note"] = ("ДИ не рассчитан (вырожденная ширина "
+        f["CI_note"] = ("Разброс ансамбля TabPFN не рассчитан (вырожденная ширина "
                         f"{round(float(w), 2)} пп) — как сигнал не используется")
+    else:
+        f["CI_note"] = ("Разброс ансамбля TabPFN в этом прогоне не рассчитан; "
+                        "funnel_unknown_range_pp — диапазон по неизвестным стадиям воронки, не ДИ модели")
 
     # [FIX spread] PRAI — второй независимый оценщик, присутствующий у каждого
     # цикла, но его не было в списке. В реальных когортах из семи перечисленных
@@ -187,7 +190,8 @@ def build_ensemble_packet(row: dict) -> dict:
                     "роль": "итоговый ансамбль (Bayesian Evidence Fusion Engine): L1+L3+L5+L6+L4"},
         "флаги_уверенности": {k: v for k, v in build_flags(row).items()
                               if k in ("CI_category", "agreement_category", "confidence_grade",
-                                       "CI_width_pp", "ensemble_spread_pp")},
+                                       "CI_width_pp", "CI_source", "funnel_unknown_range_pp",
+                                       "ensemble_spread_pp")},
     }
 
 

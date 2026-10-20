@@ -219,6 +219,40 @@ def fetch_record_links(tb: tc.Teable, base_id: str, teable_url: str) -> dict:
     return out
 
 
+_FET_STATUS = {"single_opu": "единственная пункция", "nearest_with_stock": "ближайшая с остатком",
+               "stock_exhausted": "остатков по учёту нет — сомнительно",
+               "no_opu_in_data": "пункции в данных нет (до 2023, донорские эмбрионы)"}
+_FET_CHECK = {"match": "сходится", "more_than_tracked": "в выгрузке больше учтённого",
+              "fewer_than_tracked": "в выгрузке меньше учтённого", "unknown": "—"}
+
+
+def _fets_by_patient(clinic: tc.Clinic) -> dict:
+    """Криопереносы клиники по пациентке (ключ — часть _key до «#»): карточка цикла
+    показывает и связанные с этой пункцией переносы, и остальные переносы пациентки."""
+    pub = _read(getattr(clinic, "fet_links", "") or "")
+    priv = _read(getattr(clinic, "fet_links_private", "") or "")
+    if pub.empty or priv.empty:
+        return {}
+    who = _index_by(priv, "fet_uid")
+    out: dict = {}
+    for _, r in pub.iterrows():
+        p = who.get(str(r["fet_uid"]), {})
+        pid = _str(p.get("patient_id"))
+        if not pid:
+            continue
+        out.setdefault(pid.strip().upper(), []).append({
+            "date": _str(r.get("fet_date")), "opu_key": (_str(p.get("opu_key")) or "").upper() or None,
+            "opu": _str(r.get("opu_date")), "days": _num(r.get("days_from_opu")),
+            "day": _num(r.get("transfer_day")), "moved": _num(r.get("transferred_fet")),
+            "thawed": _num(r.get("thawed_fet")), "preg": _num(r.get("Preg")),
+            "status": _FET_STATUS.get(_str(r.get("link_status")) or "", _str(r.get("link_status"))),
+            "check": _FET_CHECK.get(_str(r.get("remaining_check")) or "", "—"),
+            "sm": _bool(r.get("surrogate"))})
+    for rows in out.values():
+        rows.sort(key=lambda x: x["date"] or "")
+    return out
+
+
 def build_payload(clinic: tc.Clinic, history: dict | None = None,
                   record_links: dict | None = None, archive: dict | None = None) -> dict:
     # Основной прогон, затем дополнительные (циклы вне когорты отчёта, scripts/
@@ -260,6 +294,7 @@ def build_payload(clinic: tc.Clinic, history: dict | None = None,
 
     cycles.sort(key=lambda c: (c["opu"] or "", c["name"]), reverse=True)
     return {
+        "fets": _fets_by_patient(clinic),
         "clinic": clinic.name, "code": clinic.code,
         "built": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "source": os.path.basename(clinic.processed_dir.rstrip("\\/")) or "processed",
@@ -316,6 +351,7 @@ def _run_cycles(proc: str, history: dict | None, record_links: dict | None) -> l
             "ci_high": _num(_pick(r, "ci_high", "rate_ci_high")),
             "ci_width": _num(r.get("ci_width_pp")),
             "ci_wide": _bool(r.get("ci_wide")),
+            "ens_low": _num(r.get("tabpfn_ens_low")), "ens_high": _num(r.get("tabpfn_ens_high")),
             "dt": _num(r.get("DIGITAL TWIN")),
             "mc": _num(r.get("p_per_transfer")),
             "cum": _num(r.get("p_cum_if_viable")),
@@ -580,6 +616,7 @@ def fetch_archive(tb: tc.Teable, base_id: str) -> dict:
                 "prai": _num(pf.get("PRAI (TabPFN)")),
                 "ci_low": _num(pf.get("PRAI CI низ")), "ci_high": _num(pf.get("PRAI CI верх")),
                 "ci_width": _num(pf.get("Ширина CI, пп")), "ci_wide": _bool(pf.get("Широкий CI")),
+                "ens_low": _num(pf.get("TabPFN ансамбль низ")), "ens_high": _num(pf.get("TabPFN ансамбль верх")),
                 "dt": _num(pf.get("DIGITAL TWIN")), "mc": _num(pf.get("P per transfer")),
                 "cum": _num(pf.get("P cum if viable")), "overall": _num(pf.get("P overall cycle")),
                 "bayes": _num(pf.get("Bayes mean")), "bayes_lo": _num(pf.get("Bayes CI низ")),
@@ -825,6 +862,31 @@ function missingReason(c, k){
   return 'нет значения';
 }
 
+/* Криопереносы пациентки: связанные с этой пункцией — первыми и выделены. Связь
+   выведена по учёту эмбрионов (persona.link_fets), прямого ключа в выгрузке нет. */
+function fetBlock(c){
+  const pat = String(c.key || '').split('#')[0].toUpperCase();
+  const all = (DATA.fets || {})[pat] || [];
+  if (!all.length) return '';
+  const key = String(c.key || '').toUpperCase();
+  const mine = all.filter(f => f.opu_key && f.opu_key === key);
+  const rest = all.filter(f => !(f.opu_key && f.opu_key === key));
+  const preg = v => v === null || v === undefined ? '—' : (v >= 1 ? 'Беременность' : 'Нет');
+  const row = (f, own) => `<tr${own ? ' style="font-weight:600"' : ''}>
+    <td>${esc(f.date || '—')}</td><td>${n0(f.day)}</td><td>${n0(f.moved)}</td><td>${n0(f.thawed)}</td>
+    <td>${preg(f.preg)}${f.sm ? ' · СМ' : ''}</td>
+    <td>${own ? 'эта пункция' : f.opu ? 'пункция ' + esc(f.opu) : '—'}${f.days !== null && f.days !== undefined ? ' (+' + n0(f.days) + ' дн.)' : ''}</td>
+    <td>${esc(f.status || '—')}</td><td>${esc(f.check || '—')}</td></tr>`;
+  const npreg = mine.filter(f => f.preg >= 1).length;
+  return `<div class="sec"><h3>Криопереносы</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">Из этой пункции: <b>${mine.length}</b>
+      криоперенос(ов), беременностей <b>${npreg}</b>. Связь с пункцией выведена по пациентке и
+      учёту эмбрионов (заморожено − разморожено); прямой ссылки в выгрузке нет.</div>
+    <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Дата переноса</th><th>День</th>
+      <th>Перенесено</th><th>Разморожено</th><th>Исход</th><th>Пункция</th><th>Связь</th>
+      <th>Сверка остатков</th></tr></thead><tbody>${mine.map(f => row(f, true)).join('')}${rest.map(f => row(f, false)).join('')}</tbody></table></div></div>`;
+}
+
 function modelsBlock(c){
   const tiles = MODELS.map(([k, label, hint]) => {
     const v = c.prob[k];
@@ -952,9 +1014,10 @@ function reviewBlock(c){
   return `<div class="sec"><h3>Ревью-лист</h3>
     <span class="badge ${cls}">${lab}</span>
     <div style="margin-top:8px">${esc(c.review.reason || '')}</div>
-    ${c.prob.ci_wide ? `<div class="note">Широкий доверительный интервал TabPFN
-      (${n1(c.prob.ci_width)} пп) — прогноз по этому циклу нестабилен; в таких случаях
-      пайплайн поднимает форензику логов MIRI и смен лотов расходников.</div>` : ''}</div>`;
+    ${c.prob.ci_wide ? `<div class="note">Широкий диапазон TabPFN по неизвестным стадиям
+      воронки (${n1(c.prob.ci_width)} пп): часть этапов цикла не внесена, прогноз зависит от
+      того, как они сложатся. Это не доверительный интервал модели. В таких случаях пайплайн
+      поднимает форензику логов MIRI и смен лотов расходников.</div>` : ''}</div>`;
 }
 
 function ozemaBlock(c){
@@ -1020,15 +1083,32 @@ function select(uid, push){
     ? "<span class='muted'>прогноз недоступен</span>"
     : `<span class="prob-pill prob-${tier(p)}">${pct(p)}</span>`;
   let ci = '';
-  if (c.prob.ci_low !== null && c.prob.ci_high !== null && c.prob.ci_low !== undefined){
+  /* Полоса — разброс членов ансамбля TabPFN (неопределённость модели). В прогонах до
+     2026-10-20 его нет: тогда показан диапазон по неизвестным стадиям воронки, который при
+     полной воронке равен нулю и доверительным интервалом не является. */
+  const ens = c.prob.ens_low !== null && c.prob.ens_low !== undefined
+           && c.prob.ens_high !== null && c.prob.ens_high !== undefined;
+  if (ens){
+    const lo = Math.max(0, Math.min(100, c.prob.ens_low*100));
+    const hi = Math.max(0, Math.min(100, c.prob.ens_high*100));
+    const me = Math.max(0, Math.min(100, (p||0)*100));
+    ci = `<div class="ci-track"><span class="ci-range" style="left:${lo}%;
+      width:${Math.max(1,hi-lo)}%"></span>
+      <span class="ci-tick" style="left:${me}%"></span></div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px">Разброс членов ансамбля TabPFN
+      ${pct(c.prob.ens_low)} – ${pct(c.prob.ens_high)} (${n1((c.prob.ens_high-c.prob.ens_low)*100)} пп)
+      ${c.prob.ci_width ? ' · по неизвестным стадиям воронки ' + n1(c.prob.ci_width) + ' пп' : ''}</div>`;
+  } else if (c.prob.ci_low !== null && c.prob.ci_high !== null && c.prob.ci_low !== undefined){
     const lo = Math.max(0, Math.min(100, c.prob.ci_low*100));
     const hi = Math.max(0, Math.min(100, c.prob.ci_high*100));
     const me = Math.max(0, Math.min(100, (p||0)*100));
     ci = `<div class="ci-track"><span class="ci-range" style="left:${lo}%;
       width:${Math.max(1,hi-lo)}%"></span>
       <span class="ci-tick" style="left:${me}%"></span></div>
-      <div class="muted" style="font-size:11.5px;margin-top:4px">95% ДИ TabPFN
-      ${pct(c.prob.ci_low)} – ${pct(c.prob.ci_high)} (${n1(c.prob.ci_width)} пп)</div>`;
+      <div class="muted" style="font-size:11.5px;margin-top:4px">Диапазон TabPFN по неизвестным
+      стадиям воронки ${pct(c.prob.ci_low)} – ${pct(c.prob.ci_high)} (${n1(c.prob.ci_width)} пп) —
+      не доверительный интервал; при полной воронке равен нулю. Разброс ансамбля в этом прогоне
+      не считался.</div>`;
   }
   $('#pane').innerHTML = `
     <div class="eyebrow">${esc(DATA.clinic)} · карточка цикла</div>
@@ -1069,6 +1149,7 @@ function select(uid, push){
     <div class="sec"><h3>Риски и структура цикла</h3>${riskBlock(c)}</div>
     ${reviewBlock(c)}
     ${ozemaBlock(c)}
+    ${fetBlock(c)}
     <div class="sec"><h3>Место цикла в когорте клиники</h3>${cohortBlock(c)}</div>
     ${historyBlock(c)}
     <div class="sec"><h3>Протокол</h3><div class="kv">

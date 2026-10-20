@@ -1373,7 +1373,9 @@ def _prob_tier(v: float) -> str:
     return "low" if v < 0.40 else ("mid" if v < 0.60 else "high")
 
 
-def _journal_prob_pill(prai, ci_low, ci_high) -> str:
+def _journal_prob_pill(prai, ci_low, ci_high, kind: str = "ensemble") -> str:
+    """Полоса — разброс членов ансамбля TabPFN (kind="ensemble") или, в прогонах до
+    2026-10-20, диапазон по неизвестным стадиям воронки (kind="stages") — не ДИ модели."""
     v = pd.to_numeric(pd.Series([prai]), errors="coerce").iloc[0]
     if pd.isna(v):
         return "<span class='muted'>—</span>"
@@ -1386,10 +1388,21 @@ def _journal_prob_pill(prai, ci_low, ci_high) -> str:
         lo_pct = max(0.0, min(100.0, float(lo) * 100))
         hi_pct = max(0.0, min(100.0, float(hi) * 100))
         v_pct = max(0.0, min(100.0, float(v) * 100))
-        bar = (f"<span class='ci-track'><span class='ci-range' "
+        what = ("разброс членов ансамбля TabPFN" if kind == "ensemble"
+                else "диапазон по неизвестным стадиям воронки (0 при полной воронке)")
+        bar = (f"<span class='ci-track' title='{what}: {lo_pct:.0f}–{hi_pct:.0f}%'><span class='ci-range' "
               f"style='left:{lo_pct:.0f}%;width:{max(1.0, hi_pct - lo_pct):.0f}%'></span>"
               f"<span class='ci-tick' style='left:{v_pct:.0f}%'></span></span>")
     return f"<span class='prob-pill prob-{tier}'>{pct}</span>{bar}"
+
+
+def _tabpfn_band(row) -> tuple:
+    """(low, high, kind): разброс ансамбля, если адаптер его дал, иначе диапазон по стадиям."""
+    lo = pd.to_numeric(pd.Series([row.get("tabpfn_ens_low")]), errors="coerce").iloc[0]
+    hi = pd.to_numeric(pd.Series([row.get("tabpfn_ens_high")]), errors="coerce").iloc[0]
+    if pd.notna(lo) and pd.notna(hi):
+        return lo, hi, "ensemble"
+    return row.get("ci_low"), row.get("ci_high"), "stages"
 
 
 def _dt_compare_text(value) -> str:
@@ -1466,7 +1479,7 @@ def _pregnancy_journal_tab(analytics_result: dict, regression_qc_frame: pd.DataF
         sorted_df = sorted_df.sort_values("_journal_sort", ascending=False)
     header = ("<tr><th>№</th><th>Дата</th><th>Пациентка</th><th>Возраст · АМН · BMI</th>"
              "<th>Воронка: фолликулы → ООК → MII → 2PN → бласт → хор.бласт</th>"
-             "<th>Прогноз P (95% ДИ)</th><th>DT_COMPARE</th></tr>")
+             "<th>Прогноз P TabPFN (полоса — разброс ансамбля)</th><th>DT_COMPARE</th></tr>")
     rows_html = []
     for i, (_, row) in enumerate(sorted_df.iterrows(), start=1):
         name = _first_present(row.get("patient_name"), row.get("Patient Full Name"))
@@ -1485,7 +1498,7 @@ def _pregnancy_journal_tab(analytics_result: dict, regression_qc_frame: pd.DataF
             f"<td>{_journal_patient_block(name, pid, repeat_n)}</td>"
             f"<td>{_journal_demo_block(row.get('age', row.get('Age')), row.get('AMH'), row.get('BMI'))}</td>"
             f"<td>{funnel_html}</td>"
-            f"<td>{_journal_prob_pill(row.get('PRAI'), row.get('ci_low'), row.get('ci_high'))}</td>"
+            f"<td>{_journal_prob_pill(row.get('PRAI'), *_tabpfn_band(row))}</td>"
             f"<td class='muted'>{_dt_compare_text(row.get('DIGITAL TWIN'))}</td></tr>")
     table = (f"<div class='table-wrap'><table class='tbl journal-table' id='journal-table'>"
             f"<thead>{header}</thead><tbody>{''.join(rows_html)}</tbody></table></div>")
@@ -1617,7 +1630,8 @@ def _review_section(analytics_result: dict, regression_qc_frame: pd.DataFrame,
     review = analytics_result.get("review_list", pd.DataFrame())
     df_u = analytics_result.get("df_u", pd.DataFrame())
     if review is None or review.empty:
-        return "<p class='muted'>Review-list пуст: явных отклонений/широких CI TabPFN не обнаружено.</p>"
+        return ("<p class='muted'>Review-list пуст: явных отклонений и широкого диапазона TabPFN "
+                "по неизвестным стадиям воронки не обнаружено.</p>")
     uids = set(review["cycle_uid"].dropna()) if "cycle_uid" in review.columns else set()
     if isinstance(df_u, pd.DataFrame) and "cycle_uid" in df_u.columns and uids:
         detail = df_u[df_u["cycle_uid"].isin(uids)].copy()
@@ -1641,7 +1655,7 @@ def _review_section(analytics_result: dict, regression_qc_frame: pd.DataFrame,
              "<span><span class='swatch' style='background:var(--amber-bg);border:1px solid var(--amber)'></span>"
              "P2 — рекомендован</span>"
              "<span><span class='swatch' style='background:var(--green-bg);border:1px solid var(--green)'></span>"
-             "без приоритета / широкий CI TabPFN</span></div>")
+             "без приоритета / широкий диапазон TabPFN по неизвестным стадиям</span></div>")
 
     rows_html = []
     for _, row in detail.iterrows():

@@ -106,13 +106,17 @@ def build_dt_predictions(dt: pd.DataFrame, tabpfn: pd.DataFrame | None,
         out["PRAI"] = np.nan
         out["ci_low"] = np.nan
         out["ci_high"] = np.nan
+        for col in ENSEMBLE_COLUMNS.values():
+            out[col] = np.nan
         out["tabpfn_join_status"] = "not_run"
     else:
         TABPFN_OUTPUT.validate(tabpfn)
         validate_ci(tabpfn)
         t = _with_join_key(tabpfn, "patient_id", "TabPFN")
-        selected = t[["_join", "p_tabpfn", "ci_low", "ci_high"]].copy()
-        selected = selected.rename(columns={"p_tabpfn": "PRAI"})
+        # Разброс членов ансамбля — с адаптера 2026-10-20; в прежних выходах колонок нет.
+        ens = [c for c in ENSEMBLE_COLUMNS if c in t.columns]
+        selected = t[["_join", "p_tabpfn", "ci_low", "ci_high", *ens]].copy()
+        selected = selected.rename(columns={"p_tabpfn": "PRAI", **ENSEMBLE_COLUMNS})
         out = out.merge(selected, on="_join", how="left", validate="one_to_one",
                         indicator="_tab_merge")
         out["tabpfn_join_status"] = out.pop("_tab_merge").map(
@@ -120,12 +124,18 @@ def build_dt_predictions(dt: pd.DataFrame, tabpfn: pd.DataFrame | None,
         ).astype("string")
         for col in ("PRAI", "ci_low", "ci_high"):
             out[col] = _numeric(out[col], out.index)
+        for col in ENSEMBLE_COLUMNS.values():
+            out[col] = pd.to_numeric(out[col], errors="coerce") if col in out.columns else np.nan
 
     out["PRAI CI (TabPFN), %"] = [
         _ci_text(lo, hi) for lo, hi in zip(out["ci_low"], out["ci_high"])
     ]
+    # ci_low/ci_high/ci_width_pp — НЕ доверительный интервал модели: разброс прогноза
+    # TabPFN по Монте-Карло-вариантам НЕИЗВЕСТНЫХ стадий воронки (0, если все стадии
+    # известны; проверено 2026-10-20). Неопределённость самой модели — tabpfn_ens_*.
     out["ci_width_pp"] = (out["ci_high"] - out["ci_low"]) * 100.0
     out["ci_wide"] = out["ci_width_pp"].gt(float(threshold_pp)).fillna(False)
+    out["tabpfn_ens_width_pp"] = (out["tabpfn_ens_high"] - out["tabpfn_ens_low"]) * 100.0
     out = add_cycle_uid(out, "patient_id", secret)
 
     # Private implementation columns and duplicate OPU merge columns do not belong
@@ -136,6 +146,12 @@ def build_dt_predictions(dt: pd.DataFrame, tabpfn: pd.DataFrame | None,
     out = out[lead + [c for c in out.columns if c not in lead]]
     DT_PREDICTIONS.validate(out)
     return out
+
+
+# Выход адаптера TabPFN -> колонки dt_predictions: разброс вероятности между членами
+# ансамбля TabPFN (min / max / SD медиан членов) и их число.
+ENSEMBLE_COLUMNS = {"ens_low": "tabpfn_ens_low", "ens_high": "tabpfn_ens_high",
+                    "ens_sd": "tabpfn_ens_sd", "n_members": "tabpfn_n_members"}
 
 
 # Model-output columns of the OPU master. They are always this run's pipeline values:

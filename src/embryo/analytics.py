@@ -189,7 +189,7 @@ def auto_interpret(df_u: pd.DataFrame) -> pd.DataFrame:
         if bool(ci_wide.iloc[pos]):
             if priority != 1:
                 priority = 2
-            why.append("ширина CI TabPFN >20 пп")
+            why.append("TabPFN: диапазон по неизвестным стадиям воронки >20 пп")
         priorities.append(priority)
         reasons.append("; ".join(why) or "в пределах ожиданий")
     out = df_u.copy()
