@@ -288,8 +288,47 @@ def design_section(d: pd.DataFrame) -> list[str]:
             "- Outcomes are used only for evaluation. Follow-up is incomplete for the most recent retrievals: transfers "
             "without a recorded ultrasound/hCG result are not in the cohort (see the staging summary of the run).",
             "- The prospective export adds observed AFC and total follicles on trigger day for a minority of cycles "
-            "(section 6); where present, observed AFC replaces the OCC-based estimate in the DT input.", ""]
+            "(section 7); where present, observed AFC replaces the OCC-based estimate in the DT input.", ""]
     return out
+
+
+def observed_vs_dt_section() -> list[str]:
+    """Факт против прогноза DT 7.1 по годам и pooled внутри когорты, в процентах.
+    Все переносы с исходом и прогнозом DT (не общая выборка всех моделей, как в §3–4)."""
+    funnel = (("MII", "MII", "med_mii"), ("2PN", "real_pn2", "med_pn2"),
+              ("Blastocysts", "Bl", "med_blasts"), ("Good blastocysts (≥3BB)", "Good Bl", "med_good"))
+    frames = {}
+    for y in YEARS:
+        d = pd.read_csv(BASE / y / "dt_predictions.csv", low_memory=False)
+        cols = {"Preg", "Bl", "DIGITAL TWIN"} | {c for _, r, m in funnel for c in (r, m)}
+        frames[y] = d[[c for c in cols if c in d]].apply(pd.to_numeric, errors="coerce")
+    out = ["## 6. Observed vs DT 7.1 predicted, by year", "",
+           "All fresh transfers with a known outcome and a DT 7.1 estimate (not restricted to the common "
+           "sample of §3–4). Outcome: % of transfers with clinical pregnancy vs mean DT 7.1 clinical probability. "
+           "The all-transfer mean mixes per-transfer probabilities with the current-cycle value 0 of transfers "
+           "without blastocysts; the per-transfer comparison is the Bl > 0 subset. Funnel: Σ observed / Σ DT median "
+           "prediction (`med_*`) over cycles with both values, shown as observed as % of predicted (100% = no bias). "
+           "MII equals the prediction by construction (DT receives the known OCC and MII at the transfer time point). "
+           "Pooled rows are within one cohort only.", "",
+           "| Year | Cohort | n | Observed, all | DT, all | n Bl > 0 | Observed, Bl > 0 | DT, Bl > 0 | O/E, Bl > 0 | "
+           "n Bl = 0 (pregnancies) |", "|---|---|---|---|---|---|---|---|---|---|"]
+    fun = ["", "| Year | Cohort | " + " | ".join(f"{lab}: observed / predicted (%)" for lab, _, _ in funnel) + " |",
+           "|---|---|" + "---|" * len(funnel)]
+    for label, years in ROWS:
+        d = pd.concat([frames[y] for y in years], ignore_index=True)
+        a = d.dropna(subset=["Preg", "DIGITAL TWIN"])
+        b, z = a[a["Bl"] > 0], a[a["Bl"] == 0]
+        coh = cohort(years[0])
+        out.append(f"| {label} | {coh} | {len(a)} | {100 * a['Preg'].mean():.1f}% | {100 * a['DIGITAL TWIN'].mean():.1f}% | "
+                   f"{len(b)} | {100 * b['Preg'].mean():.1f}% | {100 * b['DIGITAL TWIN'].mean():.1f}% | "
+                   f"{b['Preg'].mean() / b['DIGITAL TWIN'].mean():.2f} | {len(z)} ({int(z['Preg'].sum())}) |")
+        cells = []
+        for _, real, med in funnel:
+            m = d[[real, med]].dropna() if {real, med} <= set(d.columns) else pd.DataFrame()
+            cells.append(f"{m[real].sum():.0f} / {m[med].sum():.0f} ({100 * m[real].sum() / m[med].sum():.0f}%)"
+                         if len(m) and m[med].sum() else "n/a")
+        fun.append(f"| {label} | {coh} | " + " | ".join(cells) + " |")
+    return out + fun + [""]
 
 
 def main() -> None:
@@ -323,13 +362,14 @@ def main() -> None:
               "cohort.", ""]
     lines += calibration(d)
     lines += laya_centre_section()
+    lines += observed_vs_dt_section()
     dnn_imp, afc_src = {}, {}
     for y in YEARS:
         m = json.loads((BASE / y / "run_manifest.json").read_text(encoding="utf-8"))
         dnn_imp[y] = (m.get("dnn_coverage") or {}).get("model_imputed") or {}
         afc_src[y] = m["digital_twin"].get("afc_source") or {}
     bl_from_p50 = sum(int(v.get("bl", 0)) for v in dnn_imp.values())
-    lines += ["## 6. Inputs imputed for PERSONA (owner-approved)", "",
+    lines += ["## 7. Inputs imputed for PERSONA (owner-approved)", "",
               "- DT 7.1: AFC = OCC × 1.16 where no AFC is recorded (for donor-oocyte cycles the donor OCC); "
               "observed AFC where recorded (own-oocyte cycles, from the 2026 export); missing AMH/BMI by the "
               "pipeline formulas; missing attempt number = 1; sperm source inferred. AFC source per year: "
