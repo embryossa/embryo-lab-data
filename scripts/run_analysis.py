@@ -591,7 +591,14 @@ def _agent_packet(ares: dict, miri_summary: pd.DataFrame, miri_events: pd.DataFr
     # response phenotype, banking urgency) that dt-narrator's contract expects — Python
     # classifies via consult.py's fixed thresholds, the agent only narrates the result.
     # build_narrative_packet's own output is already PHI-safe (cycle_uid + numeric flags).
-    review["narrative"] = [consult.build_narrative_packet(r) for r in review.to_dict("records")]
+    # Review-list несёт только колонки для XLSX; пакет строится из полной строки цикла
+    # (df_u: tabpfn_ens_*, p_per_transfer, bayes_*, кластеры), иначе consult не видит
+    # разброс ансамбля TabPFN и пишет «не рассчитан» (найдено нарраторами PERSONA 2026).
+    full = ares["df_u"]
+    full = (full.drop_duplicates("cycle_uid").set_index("cycle_uid").to_dict("index")
+            if "cycle_uid" in full.columns else {})
+    review["narrative"] = [consult.build_narrative_packet({**full.get(r.get("cycle_uid"), {}), **r})
+                           for r in review.to_dict("records")]
     allowed = [
         "age", "Age", "Preg", "PRAI", "DIGITAL TWIN", "DNN", "ci_width_pp", "ci_wide",
         "priority", "reason", "p_per_transfer", "p_kat_raw", "p_nvsa", "p_csdi",
