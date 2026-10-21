@@ -215,9 +215,13 @@ def test_2026_headers_numeric_doctor_placeholder_and_observed_afc(tmp_path):
     staged = persona.stage_export(raw, COLUMNS_CFG, SETTINGS_CFG)
     assert staged.loc[0, "patient_id"].startswith("ТЕСТОВА АННА|")
     assert staged.loc[0, "afc"] == 12 and staged.loc[0, "follicles"] == 14
-    assert pd.isna(staged.loc[1, "afc"])               # AFC реципиентки не описывает ооциты донора
-    assert staged.loc[1, "follicles"] == 10
+    assert pd.isna(staged.loc[1, "afc"]) and pd.isna(staged.loc[1, "follicles"])  # реципиентка, ооциты донора
     assert pd.isna(staged.loc[2, "afc"]) and pd.isna(staged.loc[2, "follicles"])
+    parts = persona.lab_part_frame(staged, COLUMNS_CFG)
+    mixed = parts.loc[parts["patient_id"].eq(staged.loc[0, "patient_id"])]
+    assert mixed["follicles"].sum() == pytest.approx(14)   # смешанная программа: фолликулы не удваиваются
+    assert list(mixed["follicles"].round(4)) == [round(14 * 5 / 11, 4), round(14 * 6 / 11, 4)]
+    assert parts.loc[parts["lab_part"].eq("donor"), "follicles"].isna().all()
 
 
 def test_laya_export_is_cycle_level_with_outcome_and_no_phi(staged):

@@ -260,6 +260,7 @@ def stage_export(raw: pd.DataFrame, columns_cfg: dict, settings_cfg: dict) -> pd
     # AFC реципиентки не описывает донорские ооциты: у цикла только на ДО во вход DT
     # остаётся оценка по ОКК донора (правило 2026-10-19), наблюдаемый AFC не берётся.
     out["afc"] = out["afc"].where(~from_donor)
+    out["follicles"] = out["follicles"].where(~from_donor)   # фолликулы реципиентки — тоже
     return out
 
 
@@ -353,6 +354,11 @@ def program_frame(staged: pd.DataFrame) -> pd.DataFrame:
 def lab_part_frame(staged: pd.DataFrame, columns_cfg: dict | None = None) -> pd.DataFrame:
     """Одна строка = блок программы (ivf / icsi / donor) — широкая lab-популяция."""
     s = _booleans(staged)
+    # Фолликулы записаны на программу, а OCCR считается Σ/Σ по блокам: блок получает долю
+    # фолликулов, равную его доле собственных ОКК пункции (кЭКО + И + ЗО), чтобы сумма по
+    # блокам не удваивала фолликулы смешанной программы. DO-блоку фолликулы не относятся.
+    follicles = pd.to_numeric(s["follicles"], errors="coerce") if "follicles" in s.columns         else pd.Series(np.nan, index=s.index)
+    own_occ = s[[f"{p}_occ" for p in OWN_OOCYTE_PARTS]].apply(pd.to_numeric, errors="coerce").sum(axis=1, min_count=1)
     parts = []
     for part in LAB_PARTS:
         rows = s.loc[s[f"{part}_present"]].copy()
@@ -360,6 +366,8 @@ def lab_part_frame(staged: pd.DataFrame, columns_cfg: dict | None = None) -> pd.
             continue
         for field in FUNNEL_FIELDS:
             rows[field] = pd.to_numeric(rows[f"{part}_{field}"], errors="coerce")
+        rows["follicles"] = (np.nan if part == "donor"
+                             else follicles[rows.index] * rows["occ"] / own_occ[rows.index].where(own_occ[rows.index] > 0))
         rows["transferred"] = pd.to_numeric(rows[f"{part}_transferred"], errors="coerce")
         rows["inseminated"] = (rows["occ"] if part == "ivf" else rows["mii"] if part == "icsi"
                                else pd.Series(np.nan, index=rows.index))

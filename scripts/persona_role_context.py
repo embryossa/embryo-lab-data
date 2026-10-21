@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 BATCH = 10
@@ -29,6 +30,11 @@ def _mean(s) -> str:
 
 def _preg(x) -> int:
     return int(pd.to_numeric(x["Preg"], errors="coerce").sum())
+
+
+def _prospective_from() -> int:
+    with (ROOT / "config" / "clinics" / "persona" / "settings.yaml").open(encoding="utf-8") as s:
+        return int((yaml.safe_load(s).get("persona") or {}).get("prospective_from_year", 9999))
 
 
 def build(year: str) -> str:
@@ -84,16 +90,34 @@ def build(year: str) -> str:
             + ". `retrieval_fallback` — DIGITAL TWIN из точки «после пункции», где бластоцисты ещё "
             "неизвестны, не прогноз на день переноса; `none` — DT нет.", ""]
     imp = dt.get("imputed", {})
+    afc_obs = int(dt.get("afc_source", {}).get("afc", 0))
+    occr = next((k for k in b["cohort"]["kpi_aggregate"] if k["metric"] == "OCCR"), {})
+    occr_rows = int(occr.get("n_cycles") or 0) if occr.get("denominator") else 0
+    afc_line = ("- AFC в выгрузке нет: в DT он оценён из ОКК." if not afc_obs else
+                f"- AFC наблюдаемый у {afc_obs} циклов когорты DT (колонка выгрузки с 2026, решение владельца "
+                "2026-10-21), у остальных оценён из ОКК; источник — `afc_source`.")
+    follicle_line = ("- Фолликулов нет → OCCR недоступен." if not occr_rows else
+                     f"- Фолликулы в день триггера записаны лишь у части пункций → OCCR посчитан только на {occr_rows} "
+                     "строках-блоках lab-популяции (фолликулы программы разделены между блоками пропорционально "
+                     "собственным ОКК, DO-блоку не относятся); это не вся работа лаборатории и не вся работа врача — "
+                     "выборка малая, и почему колонка заполнена именно у этих пункций, неизвестно."
+                     + (" OCCR > 100% — не ошибка данных: знаменатель — фолликулы в день триггера; гипотеза — "
+                        "ооциты получены и из фолликулов, не попавших в этот подсчёт (методика подсчёта клиникой "
+                        "не описана)." if (occr.get("rate") or 0) > 1 else ""))
+    design = int(year) >= _prospective_from()
+    L += (["Дизайн: этот год — **проспективная когорта** статьи (решение владельца 2026-10-21); на её данных "
+           "ничего не подгонялось (сдвиг Laya — по 2023–2025). Исходы последних переносов могут быть ещё не внесены.", ""]
+          if design else [])
     L += [f"Импутация в DT (с согласия владельца): AFC = ОКК × 1.16 у {dt.get('afc_source', {}).get('afc_from_occ', 0)}; "
           f"АМГ у {imp.get('amh_imputed', 0)}, ИМТ у {imp.get('bmi_imputed', 0)}, номер попытки у "
           f"{imp.get('attempt_imputed', 0)}; источник спермы выведен у {imp.get('sperm_source_inferred', 0)}; "
           f"ОКК поднят до MII (размороженные ооциты) у {imp.get('okk_raised_for_thawed', 0)} — не ошибка данных.", "",
           "## Как читать данные PERSONA", "",
-          "- AFC в выгрузке нет: в DT он оценён из ОКК. У DO-циклов это ОКК донора при возрасте реципиентки — прогноз DT для них условен вдвойне.",
+          afc_line + " У DO-циклов это ОКК донора при возрасте реципиентки — прогноз DT для них условен вдвойне.",
           "- Laya: в `analysis_bundle.json` не выгружается — статус только из таблицы выше. "
           + ("Абсолютные вероятности откалиброваны по центру PERSONA." if laya_centre
              else "Абсолютные вероятности не интерпретировать, только ранжирование."),
-          "- Фолликулов нет → OCCR недоступен. «Аномал.опл.» не сопоставлено → 3pNR недоступен.",
+          follicle_line + " «Аномал.опл.» не сопоставлено → 3pNR недоступен.",
           f"- Freeze-all остаётся в таблицах компетентности (решение владельца; токены маски исключения у PERSONA пусты — "
           f"это не противоречие skill vienna-kpi). Lab-популяция — {m['n_lab_population']} строк-блоков; `n_cycles` в "
           f"`kpi_aggregate` — строки, валидные для метрики, поэтому меньше. Когорта DT — {n} свежих переносов с известным исходом.",
