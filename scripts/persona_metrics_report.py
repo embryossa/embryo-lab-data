@@ -222,8 +222,12 @@ def runs_section() -> list[str]:
             if not r.get("denominator"):
                 cells.append("n/a")
                 continue
-            cells.append(f"{100 * r['rate']:.1f}% ({int(r['numerator'])}/{int(r['denominator'])}; "
-                         f"{100 * r['ci_low_95']:.1f}–{100 * r['ci_high_95']:.1f})")
+            # Доля > 100% (OCCR, ClR): биномиальный ДИ не определён — не ошибка данных.
+            ci = (f"{100 * r['ci_low_95']:.1f}–{100 * r['ci_high_95']:.1f}" if r.get("ci_low_95") is not None
+                  else "CI not defined, rate > 100%")
+            num, den = r["numerator"], r["denominator"]
+            fmt = (lambda v: f"{v:g}") if (num % 1 or den % 1) else (lambda v: f"{int(v)}")
+            cells.append(f"{100 * r['rate']:.1f}% ({fmt(num)}/{fmt(den)}; {ci})")
         comp = f"{'≥' if first['direction'] == 'lower' else '≤'}{100 * first['competency']:.0f}%" \
             if first.get("competency") is not None else "—"
         bench = f"{'≥' if first['direction'] == 'lower' else '≤'}{100 * first['benchmark']:.0f}%" \
@@ -314,7 +318,9 @@ def main() -> None:
     lines += ["## 4. Calibration in the large", "",
               "O/E = observed / mean predicted. Calibration slope = coefficient of logit(p) in a logistic model "
               "of the outcome (1 = ideal). Laya (raw) has no centre calibration; the PERSONA-calibrated Laya "
-              "is evaluated out of sample (leave-one-year-out shift).", ""]
+              "is evaluated out of sample: retrospective years with the shift fitted on the other retrospective "
+              "years (leave-one-year-out), prospective years with the shift fitted on the whole retrospective "
+              "cohort.", ""]
     lines += calibration(d)
     lines += laya_centre_section()
     dnn_imp, afc_src = {}, {}
