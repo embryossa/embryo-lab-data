@@ -6,8 +6,12 @@ dt_predictions.csv (вероятности моделей + исход). Все 
 Дискриминация и калибровка — на общей выборке циклов, где есть оценка всех моделей и
 исход (клиническая беременность по УЗИ, включая внематочную). 95% ДИ AUC и ΔAUC —
 бутстреп по циклам (2000 повторов, seed 20261020), ΔAUC — парный.
-Laya с калибровкой центра оценивается вне выборки: сдвиг интерсепта logit подбирается
-на двух других годах (leave-one-year-out), как в Laya/scripts/42_centre_persona.py.
+Дизайн (решение владельца 2026-10-21): годы до persona.prospective_from_year в
+settings.yaml клиники — ретроспективная когорта, с него — проспективная; pooled
+считается внутри каждой когорты и никогда через их границу.
+Laya с калибровкой центра оценивается вне выборки: в ретроспективной когорте сдвиг
+интерсепта logit подбирается на других ретроспективных годах (leave-one-year-out), как в
+Laya/scripts/42_centre_persona.py; в проспективной — на всей ретроспективной когорте.
 
     python scripts/persona_metrics_report.py
 """
@@ -20,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, roc_auc_score
 
@@ -29,7 +34,28 @@ from embryo.clinics.persona import run_years  # noqa: E402
 
 BASE = ROOT / "data" / "processed" / "persona"
 YEARS = tuple(run_years(BASE))
-POOLED = f"{YEARS[0]}–{YEARS[-1]}" if YEARS else "—"
+SPAN = f"{YEARS[0]}–{YEARS[-1]}" if YEARS else "—"
+with (ROOT / "config" / "clinics" / "persona" / "settings.yaml").open(encoding="utf-8") as _s:
+    PROSPECTIVE_FROM = int((yaml.safe_load(_s).get("persona") or {}).get("prospective_from_year", 9999))
+RETRO = tuple(y for y in YEARS if int(y) < PROSPECTIVE_FROM)
+PROS = tuple(y for y in YEARS if int(y) >= PROSPECTIVE_FROM)
+
+
+def _span(years) -> str:
+    return f"{years[0]}–{years[-1]}" if len(years) > 1 else years[0]
+
+
+def cohort(year: str) -> str:
+    return "prospective" if year in PROS else "retrospective"
+
+
+# Строки таблиц: годы ретроспективы, её pooled, годы проспективы, её pooled (pooled —
+# только при ≥2 годах когорты). Label -> годы.
+ROWS: list[tuple[str, tuple[str, ...]]] = []
+for _years, _name in ((RETRO, "retrospective"), (PROS, "prospective")):
+    ROWS += [(f"{y} ({_name})", (y,)) for y in _years]
+    if len(_years) > 1:
+        ROWS.append((f"{_span(_years)} {_name}, pooled", _years))
 EPS = 1e-6
 N_BOOT = 2000
 MODELS = {  # подпись -> колонка dt_predictions
@@ -75,21 +101,26 @@ def load() -> pd.DataFrame:
     for c in ["Preg", "Bl", *MODELS.values()]:
         d[c] = pd.to_numeric(d[c], errors="coerce")
     d = d.dropna(subset=["Preg", *MODELS.values()]).reset_index(drop=True)
-    # Laya с калибровкой PERSONA вне выборки: сдвиг с двух других лет
-    d["laya_loyo"] = np.nan
+    # Laya с калибровкой PERSONA вне выборки: ретроспектива — сдвиг с других
+    # ретроспективных лет; проспектива — со всей ретроспективной когорты.
+    d["laya_oos"] = np.nan
     for y in YEARS:
-        tr = d["year"].ne(y)
+        tr = d["year"].isin(RETRO) & d["year"].ne(y)
+        if not tr.any():
+            continue
         a = intercept(logit(d.loc[tr, "laya_raw"]), d.loc[tr, "Preg"].to_numpy())
-        d.loc[~tr, "laya_loyo"] = expit(logit(d.loc[~tr, "laya_raw"]) + a)
+        test = d["year"].eq(y)
+        d.loc[test, "laya_oos"] = expit(logit(d.loc[test, "laya_raw"]) + a)
     return d
 
 
-def subsets(d: pd.DataFrame):
-    for name, mask in (("All fresh transfers", pd.Series(True, index=d.index)),
-                       ("Transfers with ≥1 blastocyst (Bl > 0)", d["Bl"].gt(0))):
-        for y in (*YEARS, POOLED):
-            s = d[mask] if y == POOLED else d[mask & d["year"].eq(y)]
-            yield name, y, s
+SUBSETS = ("All fresh transfers", "Transfers with ≥1 blastocyst (Bl > 0)")
+
+
+def subsets(d: pd.DataFrame, name: str):
+    mask = d["Bl"].gt(0) if name == SUBSETS[1] else pd.Series(True, index=d.index)
+    for label, years in ROWS:
+        yield label, d[mask & d["year"].isin(years)]
 
 
 def boot_idx(n: int, rng):
@@ -108,16 +139,14 @@ def fmt_ci(v, lo, hi, nd=3):
 def discrimination(d: pd.DataFrame) -> list[str]:
     out = []
     rng = np.random.default_rng(20261020)
-    for name, _, _ in list(subsets(d))[::4]:
+    for name in SUBSETS:
         out += [f"### {name}", "",
                 "| Year | n (events) | " + " | ".join(MODELS) + " |",
                 "|---|---|" + "---|" * len(MODELS)]
         delta = [f"#### Paired ΔAUC vs {REF} — {name}", "",
                  "| Year | " + " | ".join(m for m in MODELS if m != REF) + " |",
                  "|---|" + "---|" * (len(MODELS) - 1)]
-        for nm, y, s in subsets(d):
-            if nm != name:
-                continue
+        for y, s in subsets(d, name):
             yy = s["Preg"].to_numpy().astype(int)
             idx = boot_idx(len(s), rng)
             cells, dcells = [], []
@@ -138,18 +167,18 @@ def discrimination(d: pd.DataFrame) -> list[str]:
 
 
 def calibration(d: pd.DataFrame) -> list[str]:
-    cols = {**MODELS, "Laya (PERSONA-calibrated, LOYO)": "laya_loyo"}
+    cols = {**MODELS, "Laya (PERSONA-calibrated, out of sample)": "laya_oos"}
     out = []
-    for name, _, _ in list(subsets(d))[::4]:
+    for name in SUBSETS:
         out += [f"### {name}", "",
                 "| Year | Model | n | Observed | Mean predicted | O/E | Brier | Calibration slope |",
                 "|---|---|---|---|---|---|---|---|"]
-        for nm, y, s in subsets(d):
-            if nm != name:
-                continue
+        for y, s in subsets(d, name):
             yy = s["Preg"].to_numpy().astype(int)
             for m, col in cols.items():
                 p = s[col].to_numpy()
+                if np.isnan(p).any():
+                    continue
                 out.append(f"| {y} | {m} | {len(s)} | {yy.mean():.3f} | {p.mean():.3f} | "
                            f"{yy.mean() / p.mean():.2f} | {brier_score_loss(yy, p):.4f} | {slope(p, yy):.2f} |")
         out.append("")
@@ -158,10 +187,10 @@ def calibration(d: pd.DataFrame) -> list[str]:
 
 def runs_section() -> list[str]:
     out = ["## 1. Runs and components", "",
-           "| Year | Lab population (method blocks) | DT cohort (fresh transfers, known outcome) | "
+           "| Year | Cohort | Lab population (method blocks) | DT cohort (fresh transfers, known outcome) | "
            "Pregnancies | DT 7.1: transfer / retrieval fallback / none | TabPFN | TabPFN-3 regression | "
            "DNN scored | Laya scored | Laya high disagreement | Review-list |",
-           "|---|---|---|---|---|---|---|---|---|---|---|"]
+           "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     kpi_rows = {}
     for y in YEARS:
         m = json.loads((BASE / y / "run_manifest.json").read_text(encoding="utf-8"))
@@ -172,23 +201,24 @@ def runs_section() -> list[str]:
         preg = int(pd.to_numeric(d["Preg"], errors="coerce").sum())
         dnn = (m.get("dnn_coverage") or {}).get("scored", 0)
         lc = m.get("laya_coverage") or {}
-        out.append(f"| {y} | {m['n_lab_population']} | {m['n_cycles']} | {preg} | "
+        out.append(f"| {y} | {cohort(y)} | {m['n_lab_population']} | {m['n_cycles']} | {preg} | "
                    f"{tp.get('transfer', 0)} / {tp.get('retrieval_fallback', 0)} / {tp.get('none', 0)} | "
                    f"{int(pd.to_numeric(d['PRAI'], errors='coerce').notna().sum())} | {m['regression_status']} | "
                    f"{dnn} | {lc.get('scored', 0)} | {lc.get('disagreement_high', 0)} | {len(rv)} |")
         kpi_rows[y] = {k["metric"]: k for k in b["cohort"]["kpi_aggregate"]}
     out += ["", "## 2. Vienna laboratory KPIs (pooled Σ numerator / Σ denominator, Wilson 95% CI)", "",
             "Lab population: all method blocks with laboratory work, freeze-all included (clinic decision). "
-            "OCCR not available (no follicle counts in the export); 3pNR not mapped.", "",
+            "OCCR: follicle counts (total follicles on trigger day) are recorded only from the 2026 export and only "
+            "in a minority of retrievals, so OCCR is shown where follicles are known; 3pNR not mapped.", "",
             "| KPI | Competency | Benchmark | " + " | ".join(YEARS) + " |",
             "|---|---|---|" + "---|" * len(YEARS)]
     for k in KPI_ORDER:
-        first = kpi_rows[YEARS[0]].get(k)
+        first = next((kpi_rows[y][k] for y in YEARS if k in kpi_rows[y]), None)
         if not first:
             continue
         cells = []
         for y in YEARS:
-            r = kpi_rows[y][k]
+            r = kpi_rows[y].get(k) or {}
             if not r.get("denominator"):
                 cells.append("n/a")
                 continue
@@ -221,17 +251,55 @@ def laya_centre_section() -> list[str]:
     return out + [""]
 
 
+def design_section(d: pd.DataFrame) -> list[str]:
+    """Дизайн для статьи: только факты из манифестов и выходов прогонов."""
+    manifests = {y: json.loads((BASE / y / "run_manifest.json").read_text(encoding="utf-8")) for y in YEARS}
+    prints = {y: set(m["digital_twin"].get("model_fingerprints") or []) for y, m in manifests.items()}
+    retro_prints = set().union(*(prints[y] for y in RETRO)) if RETRO else set()
+    out = ["## Study design", ""]
+    if RETRO:
+        out.append(f"- **Retrospective cohort:** {_span(RETRO)} — fresh transfers with a known outcome "
+                   f"(n = {int(d['year'].isin(RETRO).sum())} in the common sample).")
+    if not PROS:
+        return out + ["- No prospective year has a finished run yet.", ""]
+    span = _span(PROS)
+    dates = []
+    for y in PROS:
+        p = pd.read_csv(BASE / y / "dt_predictions.csv", low_memory=False)
+        col = next((c for c in ("Date OPU", "date_opu") if c in p.columns), None)
+        if col:
+            dates.append(pd.to_datetime(p[col], errors="coerce"))
+    rng = pd.concat(dates).agg(["min", "max"]) if dates else None
+    period = (f"retrievals {rng['min']:%Y-%m-%d} to {rng['max']:%Y-%m-%d}" if rng is not None
+              and rng.notna().all() else f"year {span}")
+    same_dt = all(prints[y] and prints[y] <= retro_prints for y in PROS)
+    out += [f"- **Prospective cohort:** {span} ({period}; n = {int(d['year'].isin(PROS).sum())} fresh transfers "
+            "with a known outcome in the common sample). It is analysed as a prospective study and reported "
+            "separately: no metric pools prospective and retrospective cycles.",
+            "- Nothing used for prediction was fitted on prospective data: the Laya PERSONA centre shift was fitted "
+            f"on {_span(RETRO) if RETRO else 'earlier years'} (out-of-sample evaluation here uses the shift fitted on "
+            "the whole retrospective cohort); the AFC-from-OCC coefficient (1.16) was fitted on another clinic "
+            "(Fertimed); the DT 7.1 model fingerprint in the prospective run "
+            + ("is identical to the retrospective runs." if same_dt else "DIFFERS from the retrospective runs — check before publication."),
+            "- Outcomes are used only for evaluation. Follow-up is incomplete for the most recent retrievals: transfers "
+            "without a recorded ultrasound/hCG result are not in the cohort (see the staging summary of the run).",
+            "- The prospective export adds observed AFC and total follicles on trigger day for a minority of cycles "
+            "(section 6); where present, observed AFC replaces the OCC-based estimate in the DT input.", ""]
+    return out
+
+
 def main() -> None:
     d = load()
     n_bl0 = int(d["Bl"].eq(0).sum())
     ciw = pd.concat([pd.to_numeric(pd.read_csv(BASE / y / "dt_predictions.csv", low_memory=False)["ci_width_pp"],
                                    errors="coerce") for y in YEARS])
     ci_small, ci_n, ci_max = int(ciw.lt(0.1).sum()), int(ciw.notna().sum()), float(ciw.max())
-    lines = [f"# PERSONA {POOLED}: run metrics and model discrimination", "",
+    lines = [f"# PERSONA {SPAN}: run metrics and model discrimination", "",
              f"_Generated {date.today().isoformat()} by `embryo-lab-data/scripts/persona_metrics_report.py` "
              "from run outputs (aggregates only; no identifiers)._", "",
              "Outcome: clinical pregnancy confirmed by ultrasound (including ectopic), per fresh transfer; "
              "not live birth. Cryo-transfers are not linked to retrievals and are not included.", ""]
+    lines += design_section(d)
     lines += runs_section()
     lines += ["## 3. Discrimination (AUC-ROC, 95% bootstrap CI)", "",
               f"Common sample: fresh transfers with a known outcome and an estimate from every model "
@@ -249,17 +317,20 @@ def main() -> None:
               "is evaluated out of sample (leave-one-year-out shift).", ""]
     lines += calibration(d)
     lines += laya_centre_section()
-    dnn_imp = {}
+    dnn_imp, afc_src = {}, {}
     for y in YEARS:
-        cov = json.loads((BASE / y / "run_manifest.json").read_text(encoding="utf-8")).get("dnn_coverage") or {}
-        dnn_imp[y] = cov.get("model_imputed") or {}
+        m = json.loads((BASE / y / "run_manifest.json").read_text(encoding="utf-8"))
+        dnn_imp[y] = (m.get("dnn_coverage") or {}).get("model_imputed") or {}
+        afc_src[y] = m["digital_twin"].get("afc_source") or {}
     bl_from_p50 = sum(int(v.get("bl", 0)) for v in dnn_imp.values())
     lines += ["## 6. Inputs imputed for PERSONA (owner-approved)", "",
-              "- DT 7.1: AFC = OCC × 1.16 (no AFC in the export; for donor-oocyte cycles the donor OCC); "
-              "missing AMH/BMI by the pipeline formulas; missing attempt number = 1; sperm source inferred.",
-              "- DNN (EVO): follicles = rint(OCC / 0.846) for all cycles (no follicle counts); inseminated = MII "
+              "- DT 7.1: AFC = OCC × 1.16 where no AFC is recorded (for donor-oocyte cycles the donor OCC); "
+              "observed AFC where recorded (own-oocyte cycles, from the 2026 export); missing AMH/BMI by the "
+              "pipeline formulas; missing attempt number = 1; sperm source inferred. AFC source per year: "
+              + "; ".join(f"{y} {v}" for y, v in afc_src.items()) + ".",
+              "- DNN (EVO): follicles = rint(OCC / 0.846) where follicles are not recorded; inseminated = MII "
               f"for donor-oocyte cycles; missing blastocyst count from the TabPFN-3 P50 in {bl_from_p50} cycle(s). "
-              "OCC/follicles is therefore ≈0.846 for every cycle and carries no information. Per year: "
+              "Where imputed, OCC/follicles is ≈0.846 and carries no information. Per year: "
               + "; ".join(f"{y} {v}" for y, v in dnn_imp.items()) + ".",
               "- Laya: the same follicle/inseminated rule (`--impute-dt71`), attempt = 1 if missing.",
               f"- TabPFN stage range (`ci_width_pp`; historically labelled a 95% CI) is below 0.1 pp in {ci_small} of "

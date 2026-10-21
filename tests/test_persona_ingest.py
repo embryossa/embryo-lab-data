@@ -197,6 +197,29 @@ def test_afc_from_donor_occ_only_without_own_oocytes(workbook):
     assert pd.isna(staged.loc[2, "afc_from_occ"])     # криоперенос: ОКК нет
 
 
+def test_2026_headers_numeric_doctor_placeholder_and_observed_afc(tmp_path):
+    rows = _sheet_rows()
+    header = rows[1]
+    header[header.index("")] = "2"                     # в 2026 заглушка "Врач ТВП" — число
+    header[header.index("ФИО пациента")] = "ФИО пациентов"
+    header += ["AFC (число антральных фолликулов)", "Число фолликулов в день триггера общее"]
+    for row, extra in zip(rows[2:], [[12, 14], [9, 10], [None, None], [None, None]]):
+        row += extra
+    path = tmp_path / "Нов. отчет 2026.xlsx"
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame(rows).to_excel(writer, sheet_name="нов2024", header=False, index=False)
+    raw = persona.read_export(path, COLUMNS_CFG)
+    assert "Врач ТВП" in raw.columns and raw.loc[0, "Врач ТВП"] == "YYY"
+    for col in [c for c in raw.columns if c.startswith("И ")]:
+        raw.loc[1, col] = None                         # вторая программа — только донорские ооциты
+    staged = persona.stage_export(raw, COLUMNS_CFG, SETTINGS_CFG)
+    assert staged.loc[0, "patient_id"].startswith("ТЕСТОВА АННА|")
+    assert staged.loc[0, "afc"] == 12 and staged.loc[0, "follicles"] == 14
+    assert pd.isna(staged.loc[1, "afc"])               # AFC реципиентки не описывает ооциты донора
+    assert staged.loc[1, "follicles"] == 10
+    assert pd.isna(staged.loc[2, "afc"]) and pd.isna(staged.loc[2, "follicles"])
+
+
 def test_laya_export_is_cycle_level_with_outcome_and_no_phi(staged):
     laya = persona.laya_export(staged, b"secret")
     assert len(laya) == 2                             # обе свежие программы с переносом и исходом

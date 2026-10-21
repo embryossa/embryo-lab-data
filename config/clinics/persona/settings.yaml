@@ -24,6 +24,10 @@ persona:
   afc_per_occ: 1.16
   # ИМТ вне диапазона — ошибка ввода (в выгрузке есть 0, 163, 442) -> пропуск.
   bmi_plausible: [12, 70]
+  # Дизайн для статьи (решение владельца 2026-10-21): годы до этого — ретроспективная
+  # когорта, с этого года — проспективная. scripts/persona_metrics_report.py показывает
+  # их отдельными блоками и не объединяет в один pooled.
+  prospective_from_year: 2026
 
 external_tools:
   laya:
@@ -48,8 +52,10 @@ external_tools:
       # sperm_source_inferred остаётся (токен не однозначный).
       sperm_source_map: {tesa: "testicular_OA"}
       impute:
-        afc_columns: [afc_from_occ]           # оценка AFC = ОКК x persona.afc_per_occ (флаг afc_source)
-        afc_from_follicles: false             # колонки фолликулов нет
+        # Наблюдаемый AFC (с 2026, ~6% ТВП) приоритетнее оценки ОКК x persona.afc_per_occ
+        # (решение владельца 2026-10-21); источник — флаг afc_source.
+        afc_columns: [afc, afc_from_occ]
+        afc_from_follicles: false             # фолликулы в день триггера не заменяют AFC
         afc_constant: null                    # без ОКК (своих или донорских) AFC не подставляется
         attempt: 1
         okk_for_thawed_oocytes: true

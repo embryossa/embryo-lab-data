@@ -103,7 +103,8 @@ def read_export(path: str | Path, columns_cfg: dict) -> pd.DataFrame:
     headers = [_clean_header(v) for v in raw.iloc[header_row].values]
     blank_rule = export.get("blank_header_before") or {}
     for i, name in enumerate(headers):
-        if name == blank_rule.get("column") and i > 0 and headers[i - 1] == "":
+        # Заглушка — пустой заголовок (2025) или число (в 2026 там "2").
+        if name == blank_rule.get("column") and i > 0 and re.fullmatch(r"\d*", headers[i - 1]):
             headers[i - 1] = blank_rule["name"]
     frame = raw.iloc[header_row + 1:].copy()
     frame.columns = [h if h else f"<col{i}>" for i, h in enumerate(headers)]
@@ -200,6 +201,10 @@ def stage_export(raw: pd.DataFrame, columns_cfg: dict, settings_cfg: dict) -> pd
     out["bmi"] = bmi.where(bmi.between(lo, hi))
     out["amh"] = _parse_decimal(src["amh"]) if "amh" in src.columns else np.nan
     out["fsh"] = _parse_decimal(src["fsh"]) if "fsh" in src.columns else np.nan
+    # Наблюдаемые AFC и фолликулы в день триггера — с выгрузки 2026 (решение владельца
+    # 2026-10-21); в книгах 2023-2025 колонок нет -> пропуск, не ноль.
+    out["afc"] = _num(src, "afc")
+    out["follicles"] = _num(src, "follicles")
     attempt = _num(src, "attempt_no")
     out["attempt_no"] = attempt.where(attempt > 0)
     out["attempt_in_clinic"] = _num(src, "attempt_in_clinic")
@@ -252,6 +257,9 @@ def stage_export(raw: pd.DataFrame, columns_cfg: dict, settings_cfg: dict) -> pd
     ratio = float((settings_cfg.get("persona") or {})["afc_per_occ"])
     out["afc_from_occ"] = (base * ratio).round()
     out["afc_from_donor_occ"] = from_donor
+    # AFC реципиентки не описывает донорские ооциты: у цикла только на ДО во вход DT
+    # остаётся оценка по ОКК донора (правило 2026-10-19), наблюдаемый AFC не берётся.
+    out["afc"] = out["afc"].where(~from_donor)
     return out
 
 
