@@ -164,6 +164,12 @@ IVF Digital Twin для всех клиник и всех команд — то�
    формировании окончательного XLSX/HTML, никогда не в контексте Claude.
 7. Убедись, что `agent_packets/lead_analysis.md` содержит версию, отработанную по
    замечаниям критика, и запусти `python scripts/finalize_report.py`.
+8. Только клиника A (Two-Line), владелец 2026-11-23: после финализации, слоя off-cohort
+   и Teable собери выходы прогона в отдельную папку —
+   `python scripts/collect_run.py` → `data/processed/Two-Line/<YYYY-MM-DD>_<run_id>/`
+   (отчёты, CSV/XLSX, `agent_packets`, `off_cohort`, карточки, логи прогона). Это копия:
+   пайплайн, replay и teable_sync читают `data/processed/` как раньше; `local_private`
+   не копируется. Путь к папке назови пользователю в итоговом ответе.
 
 Основные результаты: `dt_predictions.csv`, `OPU_table_enriched.xlsx`,
 `review_list.csv`, `miri_events.csv`, `lot_events.csv`, `pgt_summary.csv`,
