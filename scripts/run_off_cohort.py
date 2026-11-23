@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     dcfg = dict(cfg["external_tools"].get("dnn_verifier", {}), output=str(private / "evo_predictions.csv"))
     if dcfg.get("enabled") and not args.skip_dnn and not full_src.empty:
         try:
-            dnn_input, _ = ra._dnn_input(model_input_path, clean_regression, dcfg, private)
+            dnn_input, _ = ra._dnn_input_with_bl_imputation(model_input_path, clean_regression, dcfg, private)
             dnn_input, n_et_zero = off_cohort.dnn_input_with_zero_transfer(dnn_input, private)
             print(f"[dnn] 'Перенесено эмбрионов' = 0 при пустом ET: {n_et_zero} циклов (только вход DNN)")
             from embryo import dnn_runner
